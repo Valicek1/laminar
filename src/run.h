@@ -1,5 +1,5 @@
 ///
-/// Copyright 2015-2017 Oliver Giles
+/// Copyright 2015-2018 Oliver Giles
 ///
 /// This file is part of Laminar
 ///
@@ -27,6 +27,7 @@
 #include <unordered_map>
 #include <memory>
 #include <kj/async.h>
+#include <kj/filesystem.h>
 
 enum class RunState {
     UNKNOWN,
@@ -41,34 +42,27 @@ std::string to_string(const RunState& rs);
 
 class Node;
 
-// Represents an execution of a job. Not much more than POD
+typedef std::unordered_map<std::string, std::string> ParamMap;
+
+// Represents an execution of a job.
 class Run {
 public:
-    Run();
+    Run(std::string name, ParamMap params, kj::Path&& rootPath);
     ~Run();
 
     // copying this class would be asking for trouble...
     Run(const Run&) = delete;
     Run& operator=(const Run&) = delete;
 
+    // Call this to "start" the run with a specific number and node
+    bool configure(uint buildNum, std::shared_ptr<Node> node, const kj::Directory &fsHome);
+
     // executes the next script (if any), returning true if there is nothing
-    // more to be done - in this case the caller should call complete()
+    // more to be done.
     bool step();
 
-    // call this when all scripts are done to get the notifyCompletion callback
-    void complete();
-
-    // adds a script to the queue of scripts to be executed by this run
-    void addScript(std::string scriptPath, std::string scriptWorkingDir);
-
-    // adds a script to the queue using the runDir as the scripts CWD
-    void addScript(std::string script) { addScript(script, runDir); }
-
-    // adds an environment file that will be sourced before this run
-    void addEnv(std::string path);
-
     // aborts this run
-    void abort();
+    void abort(bool respectRunOnAbort);
 
     // called when a process owned by this run has been reaped. The status
     // may be used to set the run's job status
@@ -76,36 +70,41 @@ public:
 
     std::string reason() const;
 
-    std::function<void(Run*)> notifyCompletion;
+    kj::Promise<void>&& whenStarted() { return kj::mv(started.promise); }
+
     std::shared_ptr<Node> node;
     RunState result;
     RunState lastResult;
-    std::string laminarHome;
     std::string name;
-    std::string runDir;
     std::string parentName;
     int parentBuild = 0;
-    std::string reasonMsg;
     uint build = 0;
     std::string log;
-    pid_t pid;
-    int fd;
+    kj::Maybe<pid_t> current_pid;
+    int output_fd;
     std::unordered_map<std::string, std::string> params;
-    kj::Promise<void> timeout = kj::NEVER_DONE;
-    kj::PromiseFulfillerPair<void> started = kj::newPromiseAndFulfiller<void>();
+    int timeout;
 
     time_t queuedAt;
     time_t startedAt;
 private:
+    // adds a script to the queue of scripts to be executed by this run
+    void addScript(kj::Path scriptPath, kj::Path scriptWorkingDir, bool runOnAbort = false);
+
+    // adds an environment file that will be sourced before this run
+    void addEnv(kj::Path path);
 
     struct Script {
-        std::string path;
-        std::string cwd;
+        kj::Path path;
+        kj::Path cwd;
+        bool runOnAbort;
     };
 
+    kj::Path rootPath;
     std::queue<Script> scripts;
-    Script currentScript;
-    std::list<std::string> env;
+    std::list<kj::Path> env;
+    std::string reasonMsg;
+    kj::PromiseFulfillerPair<void> started;
 };
 
 
@@ -132,8 +131,6 @@ struct _run_same {
 
 // A single Run can be fetched by...
 struct _run_index : bmi::indexed_by<
-        // their current running pid
-        bmi::hashed_unique<bmi::member<Run, pid_t, &Run::pid>>,
         bmi::hashed_unique<bmi::composite_key<
             std::shared_ptr<Run>,
         // a combination of their job name and build number
@@ -153,20 +150,17 @@ struct RunSet: public boost::multi_index_container<
     std::shared_ptr<Run>,
     _run_index
 > {
-    typename bmi::nth_index<RunSet, 0>::type& byPid() { return get<0>(); }
-    typename bmi::nth_index<RunSet, 0>::type const& byPid() const { return get<0>(); }
+    typename bmi::nth_index<RunSet, 0>::type& byNameNumber() { return get<0>(); }
+    typename bmi::nth_index<RunSet, 0>::type const& byNameNumber() const { return get<0>(); }
 
-    typename bmi::nth_index<RunSet, 1>::type& byRun() { return get<1>(); }
-    typename bmi::nth_index<RunSet, 1>::type const& byRun() const { return get<1>(); }
+    typename bmi::nth_index<RunSet, 1>::type& byRunPtr() { return get<1>(); }
+    typename bmi::nth_index<RunSet, 1>::type const& byRunPtr() const { return get<1>(); }
 
-    typename bmi::nth_index<RunSet, 2>::type& byRunPtr() { return get<2>(); }
-    typename bmi::nth_index<RunSet, 2>::type const& byRunPtr() const { return get<2>(); }
+    typename bmi::nth_index<RunSet, 2>::type& byStartedAt() { return get<2>(); }
+    typename bmi::nth_index<RunSet, 2>::type const& byStartedAt() const { return get<2>(); }
 
-    typename bmi::nth_index<RunSet, 3>::type& byStartedAt() { return get<3>(); }
-    typename bmi::nth_index<RunSet, 3>::type const& byStartedAt() const { return get<3>(); }
-
-    typename bmi::nth_index<RunSet, 4>::type& byJobName() { return get<4>(); }
-    typename bmi::nth_index<RunSet, 4>::type const& byJobName() const { return get<4>(); }
+    typename bmi::nth_index<RunSet, 3>::type& byJobName() { return get<3>(); }
+    typename bmi::nth_index<RunSet, 3>::type const& byJobName() const { return get<3>(); }
 };
 
 #endif // LAMINAR_RUN_H_

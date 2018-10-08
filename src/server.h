@@ -20,6 +20,7 @@
 #define LAMINAR_SERVER_H_
 
 #include <kj/async-io.h>
+#include <kj/compat/http.h>
 #include <capnp/message.h>
 #include <capnp/capability.h>
 #include <functional>
@@ -41,30 +42,31 @@ public:
 
     // add a file descriptor to be monitored for output. The callback will be
     // invoked with the read data
-    void addDescriptor(int fd, std::function<void(const char*,size_t)> cb);
+    kj::Promise<void> readDescriptor(int fd, std::function<void(const char*,size_t)> cb);
 
+    void addTask(kj::Promise<void> &&task);
     // add a one-shot timer callback
     kj::Promise<void> addTimeout(int seconds, std::function<void()> cb);
 
+    // get a promise which resolves when a child process exits
+    kj::Promise<int> onChildExit(kj::Maybe<pid_t>& pid);
     // add a path to be watched for changes
     void addWatchPath(const char* dpath);
 
 private:
-    kj::Promise<void> acceptHttpClient(kj::Own<kj::ConnectionReceiver>&& listener);
     kj::Promise<void> acceptRpcClient(kj::Own<kj::ConnectionReceiver>&& listener);
     kj::Promise<void> handleFdRead(kj::AsyncInputStream* stream, char* buffer, std::function<void(const char*,size_t)> cb);
 
     void taskFailed(kj::Exception&& exception) override;
 
 private:
-    struct WebsocketConnection;
-    class HttpImpl;
-
     int efd_quit;
     capnp::Capability::Client rpcInterface;
     LaminarInterface& laminarInterface;
-    kj::Own<HttpImpl> httpInterface;
     kj::AsyncIoContext ioContext;
+    kj::HttpHeaderTable headerTable;
+    kj::Own<kj::HttpService> httpService;
+    kj::Own<kj::HttpServer> httpServer;
     kj::Own<kj::TaskSet> listeners;
     kj::TaskSet childTasks;
     kj::TaskSet httpConnections;

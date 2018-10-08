@@ -18,32 +18,18 @@
 ///
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
-#include <boost/filesystem.hpp>
 #include <thread>
 #include <sys/socket.h>
 #include "server.h"
 #include "log.h"
 #include "interface.h"
 #include "laminar.capnp.h"
-
-namespace fs = boost::filesystem;
-
-class TempDir : public fs::path {
-public:
-    TempDir(const char* tmpl) {
-        char* t = strdup(tmpl);
-        mkdtemp(t);
-        *static_cast<fs::path*>(this) = t;
-        free(t);
-    }
-    ~TempDir() {
-        fs::remove_all(*this);
-    }
-};
+#include "tempdir.h"
 
 class MockLaminar : public LaminarInterface {
 public:
     LaminarClient* client = nullptr;
+    ~MockLaminar() {}
     virtual void registerClient(LaminarClient* c) override {
         ASSERT_EQ(nullptr, client);
         client = c;
@@ -55,28 +41,26 @@ public:
         client = nullptr;
     }
 
+    // MOCK_METHOD does not seem to work with return values whose destructors have noexcept(false)
+    kj::Maybe<kj::Own<const kj::ReadableFile>> getArtefact(std::string path) override { return nullptr; }
+
     MOCK_METHOD2(queueJob, std::shared_ptr<Run>(std::string name, ParamMap params));
     MOCK_METHOD1(registerWaiter, void(LaminarWaiter* waiter));
     MOCK_METHOD1(deregisterWaiter, void(LaminarWaiter* waiter));
     MOCK_METHOD1(sendStatus, void(LaminarClient* client));
     MOCK_METHOD4(setParam, bool(std::string job, uint buildNum, std::string param, std::string value));
-    MOCK_METHOD2(getArtefact, bool(std::string path, std::string& result));
     MOCK_METHOD0(getCustomCss, std::string());
+    MOCK_METHOD2(handleBadgeRequest, bool(std::string, std::string&));
     MOCK_METHOD0(abortAll, void());
-    MOCK_METHOD0(reapChildren, void());
     MOCK_METHOD0(notifyConfigChanged, void());
 };
 
 class ServerTest : public ::testing::Test {
 protected:
-    ServerTest() :
-        tempDir("/tmp/laminar-test-XXXXXX")
-    {
-    }
     void SetUp() override {
         EXPECT_CALL(mockLaminar, registerWaiter(testing::_));
         EXPECT_CALL(mockLaminar, deregisterWaiter(testing::_));
-        server = new Server(mockLaminar, "unix:"+fs::path(tempDir/"rpc.sock").string(), "127.0.0.1:8080");
+        server = new Server(mockLaminar, "unix:"+std::string(tempDir.path.append("rpc.sock").toString(true).cStr()), "127.0.0.1:8080");
     }
     void TearDown() override {
         delete server;

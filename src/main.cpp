@@ -18,8 +18,9 @@
 ///
 #include "laminar.h"
 #include "log.h"
-
 #include <signal.h>
+#include <kj/async-unix.h>
+#include <kj/filesystem.h>
 
 static Laminar* laminar;
 
@@ -34,10 +35,12 @@ int main(int argc, char** argv) {
         }
     }
 
-    laminar = new Laminar;
+    laminar = new Laminar(getenv("LAMINAR_HOME") ?: "/var/lib/laminar");
+    kj::UnixEventPort::captureChildExit();
 
     signal(SIGINT, &laminar_quit);
     signal(SIGTERM, &laminar_quit);
+
     laminar->run();
 
     delete laminar;

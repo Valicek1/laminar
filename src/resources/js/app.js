@@ -3,34 +3,25 @@
  * https://laminar.ohwg.net
  */
 
-// usage: {{ file.size | prettyBytes }}
-// source: https://gist.github.com/james2doyle/4aba55c22f084800c199
-Vue.filter('prettyBytes', function (num) {
-  // jacked from: https://github.com/sindresorhus/pretty-bytes
-  if (typeof num !== 'number' || isNaN(num)) {
-    throw new TypeError('Expected a number');
-  }
+String.prototype.hashCode = function() {
+  for(var r=0, i=0; i<this.length; i++)
+    r=(r<<5)-r+this.charCodeAt(i),r&=r;
+  return r;
+};
 
-  var exponent;
-  var unit;
-  var neg = num < 0;
-  var units = ['B', 'kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
-
-  if (neg) {
-    num = -num;
-  }
-
-  if (num < 1) {
-    return (neg ? '-' : '') + num + ' B';
-  }
-
-  exponent = Math.min(Math.floor(Math.log(num) / Math.log(1000)), units.length - 1);
-  num = (num / Math.pow(1000, exponent)).toFixed(2) * 1;
-  unit = units[exponent];
-
-  return (neg ? '-' : '') + num + ' ' + unit;
+Vue.filter('iecFileSize', function(bytes) {
+  var exp = Math.floor(Math.log(bytes) / Math.log(1024));
+  return (bytes / Math.pow(1024, exp)).toFixed(1) + ' ' +
+    ['B', 'KiB', 'MiB', 'GiB', 'TiB'][exp];
 });
 
+const timeScale = function(max){
+  return max > 3600
+  ? { scale:function(v){return Math.round(v/360)/10}, label:'Hours' }
+  : max > 60
+  ? { scale:function(v){return Math.round(v/60)/10}, label:'Minutes' }
+  : { scale:function(v){return v;}, label:'Seconds' };
+}
 
 const wsp = function(path) {
   return new WebSocket((location.protocol === 'https:'?'wss://':'ws://')
@@ -44,8 +35,15 @@ const WebsocketHandler = function() {
       // "status" is the first message the websocket always delivers.
       // Use this to confirm the navigation. The component is not
       // created until next() is called, so creating a reference
-      // for other message types must be deferred
-      if (msg.type === 'status') {
+      // for other message types must be deferred. There are some extra
+      // subtle checks here. If this websocket already has a component,
+      // then this is not the first time the status message has been
+      // received. If the frontend requests an update, the status message
+      // should not be handled here, but treated the same as any other
+      // message. An exception is if the connection has been lost - in
+      // that case we should treat this as a "first-time" status message.
+      // this.comp.ws is used as a proxy for this.
+      if (msg.type === 'status' && (!this.comp || !this.comp.ws)) {
         next(comp => {
           // Set up bidirectional reference
           // 1. needed to reference the component for other msg types
@@ -76,11 +74,17 @@ const WebsocketHandler = function() {
       // and a re-connection isn't meaningful
       if(!ev.wasClean && 'comp' in this) {
         this.comp.$root.connected = false;
+        // remove the reference to the websocket from the component.
+        // This not only cleans up an unneeded reference but ensures a
+        // status message on reconnection is treated as "first-time"
+        delete this.comp.ws;
         this.reconnectTimeout = setTimeout(()=>{
           var newWs = setupWebsocket(path, (fn) => { fn(this.comp); });
-          // pass on the current component for the cases where the
-          // connection fails (onclose is called again) before the
-          // status message can reassign the current component
+          // the next() callback won't happen if the server is still
+          // unreachable. Save the reference to the last component
+          // here so we can recover if/when it does return. This means
+          // passing this.comp in the next() callback above is redundant
+          // but necessary to keep the same implementation.
           newWs.comp = this.comp;
         }, 2000);
       }
@@ -181,14 +185,15 @@ const ProgressUpdater = {
 const Home = function() {
   var state = {
     jobsQueued: [],
-    jobsRecent: []
+    jobsRecent: [],
+    resultChanged: []
   };
 
   var chtUtilization, chtBuildsPerDay, chtBuildsPerJob, chtTimePerJob;
 
   var updateUtilization = function(busy) {
-    chtUtilization.segments[0].value += busy ? 1 : -1;
-    chtUtilization.segments[1].value -= busy ? 1 : -1;
+    chtUtilization.data.datasets[0].data[0] += busy ? 1 : -1;
+    chtUtilization.data.datasets[0].data[1] -= busy ? 1 : -1;
     chtUtilization.update();
   }
 
@@ -203,72 +208,185 @@ const Home = function() {
         state.jobsQueued = msg.queued;
         state.jobsRunning = msg.running;
         state.jobsRecent = msg.recent;
+        state.resultChanged = msg.resultChanged;
         this.$forceUpdate();
 
         // setup charts
-        chtUtilization = new Chart(document.getElementById("chartUtil").getContext("2d")).Pie(
-          [{
-              value: msg.executorsBusy,
-              color: "tan",
-              label: "Busy"
-            },
-            {
-              value: msg.executorsTotal - msg.executorsBusy,
-              color: "darkseagreen",
-              label: "Idle"
-            }
-          ], {
-            animationEasing: 'easeInOutQuad'
+        chtUtilization = new Chart(document.getElementById("chartUtil"), {
+          type: 'pie',
+          data: {
+            labels: ["Busy", "Idle"],
+            datasets: [{
+              data: [ msg.executorsBusy, msg.executorsTotal - msg.executorsBusy ],
+              backgroundColor: ["darkgoldenrod", "forestgreen"]
+            }]
           }
-        );
-        chtBuildsPerDay = new Chart(document.getElementById("chartBpd").getContext("2d")).Line({
-          labels: function() {
-            res = [];
-            var now = new Date();
-            for (var i = 6; i >= 0; --i) {
-              var then = new Date(now.getTime() - i * 86400000);
-              res.push(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][then.getDay()]);
-            }
-            return res;
-          }(),
-          datasets: [{
-            label: "Successful Builds",
-            fillColor: "rgba(143,188,143,0.65)", //darkseagreen at 0.65
-            strokeColor: "forestgreen",
-            data: msg.buildsPerDay.map(function(e) {
-              return e.success || 0;
-            })
-          }, {
-            label: "Failed Bulids",
-            fillColor: "rgba(233,150,122,0.65)", //darksalmon at 0.65
-            strokeColor: "crimson",
-            data: msg.buildsPerDay.map(function(e) {
-              return e.failed || 0;
-            })
-          }]
-        }, {
-          showTooltips: false
         });
-        chtBuildsPerJob = new Chart(document.getElementById("chartBpj").getContext("2d")).HorizontalBar({
-          labels: Object.keys(msg.buildsPerJob),
-          datasets: [{
-            fillColor: "lightsteelblue",
-            data: Object.keys(msg.buildsPerJob).map(function(e) {
-              return msg.buildsPerJob[e];
-            })
-          }]
-        }, {});
-        chtTimePerJob = new Chart(document.getElementById("chartTpj").getContext("2d")).HorizontalBar({
-          labels: Object.keys(msg.timePerJob),
-          datasets: [{
-            fillColor: "lightsteelblue",
-            data: Object.keys(msg.timePerJob).map(function(e) {
-              return msg.timePerJob[e];
-            })
-          }]
-        }, {});
-
-
+        var buildsPerDayDates = function(){
+          res = [];
+          var now = new Date();
+          for (var i = 6; i >= 0; --i) {
+            var then = new Date(now.getTime() - i * 86400000);
+            res.push({
+              short: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][then.getDay()],
+              long: then.toLocaleDateString()}
+            );
+          }
+          return res;
+        }();
+        chtBuildsPerDay = new Chart(document.getElementById("chartBpd"), {
+          type: 'line',
+          data: {
+            labels: buildsPerDayDates.map((e)=>{ return e.short; }),
+            datasets: [{
+              label: 'Successful Builds',
+              backgroundColor: "rgba(34,139,34,0.65)", //forestgreen at 0.65
+              borderColor: "forestgreen",
+              data: msg.buildsPerDay.map((e)=>{ return e.success || 0; })
+            }, {
+              label: 'Failed Builds',
+              backgroundColor: "rgba(178,34,34,0.65)", //firebrick at 0.65
+              borderColor: "firebrick",
+              data: msg.buildsPerDay.map((e)=>{ return e.failed || 0; })
+            }]
+          },
+          options:{
+            tooltips:{callbacks:{title: function(tip, data) {
+              return buildsPerDayDates[tip[0].index].long;
+            }}},
+            scales:{yAxes:[{ticks:{userCallback: (label, index, labels)=>{
+              if(Number.isInteger(label))
+                return label;
+            }}}]}
+          }
+        });
+        chtBuildsPerJob = new Chart(document.getElementById("chartBpj"), {
+          type: 'horizontalBar',
+          data: {
+            labels: Object.keys(msg.buildsPerJob),
+            datasets: [{
+              label: 'Runs in last 24 hours',
+              backgroundColor: "steelblue",
+              data: Object.keys(msg.buildsPerJob).map((e)=>{ return msg.buildsPerJob[e]; })
+            }]
+          },
+          options:{
+            scales:{xAxes:[{ticks:{userCallback: (label, index, labels)=>{
+              if(Number.isInteger(label))
+                return label;
+            }}}]}
+          }
+        });
+        var tpjScale = timeScale(Math.max(Object.values(msg.timePerJob)));
+        chtTimePerJob = new Chart(document.getElementById("chartTpj"), {
+          type: 'horizontalBar',
+          data: {
+            labels: Object.keys(msg.timePerJob),
+            datasets: [{
+              label: 'Mean run time this week',
+              backgroundColor: "steelblue",
+              data: Object.keys(msg.timePerJob).map((e)=>{ return msg.timePerJob[e]; })
+            }]
+          },
+          options:{
+            scales:{xAxes:[{
+              ticks:{userCallback: tpjScale.scale},
+              scaleLabel: {
+                display: true,
+                labelString: tpjScale.label
+              }
+            }]},
+            tooltips:{callbacks:{label:(tip, data)=>{
+              return data.datasets[tip.datasetIndex].label + ': ' + tip.xLabel + ' ' + tpjScale.label.toLowerCase();
+            }}}
+          }
+        });
+        var chtResultChanges = new Chart(document.getElementById("chartResultChanges"), {
+          type: 'horizontalBar',
+          data: {
+            labels: msg.resultChanged.map((e)=>{ return e.name; }),
+            datasets: [{
+              //label: '% Passed',
+              backgroundColor: msg.resultChanged.map((e)=>{return e.lastFailure > e.lastSuccess ? 'firebrick' : 'forestgreen';}),
+              data: msg.resultChanged.map((e)=>{ return e.lastSuccess - e.lastFailure; }),
+              itemid: msg.resultChanged.map((e)=> { return 'rcd_' + e.name; })
+            }]
+          },
+          options:{
+            scales:{
+              xAxes:[{ticks:{display: false}}],
+              yAxes:[{ticks:{display: false}}]
+            },
+            tooltips:{
+              enabled:false
+            }
+          }
+        });
+        var chtPassRates = new Chart(document.getElementById("chartPassRates"), {
+          type: 'horizontalBar',
+          data: {
+            labels: msg.lowPassRates.map((e)=>{ return e.name }),
+            datasets: [{
+              stack: 'passrate',
+              label: '% Passed',
+              backgroundColor: "forestgreen",
+              data: msg.lowPassRates.map((e)=>{ return e.passRate*100; })
+            },{
+              stack:'passrate',
+              label: '% Failed',
+              backgroundColor: "firebrick",
+              data: msg.lowPassRates.map((e)=>{ return (1-e.passRate)*100; })
+            }],
+          },
+          options:{
+            scales:{xAxes:[{ticks:{callback:(val,idx,values)=>{
+              return val + '%';
+            }}}]},
+            tooltips:{
+              enabled:false
+            }
+          }
+        });
+        var btcScale = timeScale(Math.max(msg.buildTimeChanges.map((e)=>{return Math.max(e.durations)})));
+        var chtBuildTimeChanges = new Chart(document.getElementById("chartBuildTimeChanges"), {
+          type: 'line',
+          data: {
+            labels: [...Array(10).keys()],
+            datasets: msg.buildTimeChanges.map((e)=>{return {
+              label: e.name,
+              data: e.durations,
+              borderColor: 'hsl('+(e.name.hashCode() % 360)+', 61%, 34%)',
+              backgroundColor: 'transparent'
+            }})
+          },
+          options:{
+            legend:{display:true},
+            scales:{
+              xAxes:[{ticks:{display: false}}],
+              yAxes:[{
+                ticks:{userCallback: btcScale.scale},
+                scaleLabel: {
+                  display: true,
+                  labelString: btcScale.label
+                }
+              }]
+            },
+            tooltips:{
+              enabled:false
+            }
+          }
+        });
+        var chtBuildTimeDist = new Chart(document.getElementById("chartBuildTimeDist"), {
+          type: 'line',
+          data: {
+            labels: ['<30s','30s-1m','1m-5m','5m-10m','10m-20m','20m-40m','40m-60m','>60m'],
+            datasets: [{
+              label: 'Number jobs with average build time in range',
+              data: msg.buildTimeDist,
+              backgroundColor: "steelblue",
+            }]
+          }
+        });
       },
       job_queued: function(data) {
         state.jobsQueued.splice(0, 0, data);
@@ -282,9 +400,9 @@ const Home = function() {
       },
       job_completed: function(data) {
         if (data.result === "success")
-          chtBuildsPerDay.datasets[0].points[6].value++;
+          chtBuildsPerDay.data.datasets[0].data[6]++;
         else
-          chtBuildsPerDay.datasets[1].points[6].value++;
+          chtBuildsPerDay.data.datasets[1].data[6]++;
         chtBuildsPerDay.update();
 
         for (var i = 0; i < state.jobsRunning.length; ++i) {
@@ -297,9 +415,9 @@ const Home = function() {
           }
         }
         updateUtilization(false);
-        for (var j = 0; j < chtBuildsPerJob.datasets[0].bars.length; ++j) {
-          if (chtBuildsPerJob.datasets[0].bars[j].label == job.name) {
-            chtBuildsPerJob.datasets[0].bars[j].value++;
+        for (var j = 0; j < chtBuildsPerJob.data.datasets[0].data.length; ++j) {
+          if (chtBuildsPerJob.data.labels[j] == job.name) {
+            chtBuildsPerJob.data.datasets[0].data[j]++;
             chtBuildsPerJob.update();
             break;
           }
@@ -320,24 +438,6 @@ const Jobs = function() {
     template: '#jobs',
     mixins: [WebsocketHandler, Utils, ProgressUpdater],
     data: function() { return state; },
-    computed: {
-      filteredJobs() {
-        var ret = this.jobs;
-        var tag = this.tag;
-        if (tag) {
-          ret = ret.filter(function(job) {
-            return job.tags.indexOf(tag) >= 0;
-          });
-        }
-        var search = this.search;
-        if (search) {
-          ret = ret.filter(function(job) {
-            return job.name.indexOf(search) > -1;
-          });
-        }
-        return ret;
-      }
-    },
     methods: {
       status: function(msg) {
         state.jobs = msg.jobs;
@@ -363,6 +463,7 @@ const Jobs = function() {
       },
       job_started: function(data) {
         var updAt = null;
+        // jobsRunning must be maintained for ProgressUpdater
         for (var i in state.jobsRunning) {
           if (state.jobsRunning[i].name === data.name) {
             updAt = i;
@@ -405,7 +506,23 @@ const Jobs = function() {
             break;
           }
         }
-      }
+      },
+      filteredJobs: function() {
+        var ret = state.jobs;
+        var tag = state.tag;
+        if (tag) {
+          ret = ret.filter(function(job) {
+            return job.tags.indexOf(tag) >= 0;
+          });
+        }
+        var search = this.search;
+        if (search) {
+          ret = ret.filter(function(job) {
+            return job.name.indexOf(search) > -1;
+          });
+        }
+        return ret;
+      },
     }
   };
 }();
@@ -417,7 +534,10 @@ var Job = function() {
     lastSuccess: null,
     lastFailed: null,
     nQueued: 0,
+    pages: 0,
+    sort: {}
   };
+  var chtBt = null;
   return Vue.extend({
     template: '#job',
     mixins: [WebsocketHandler, Utils, ProgressUpdater],
@@ -431,32 +551,70 @@ var Job = function() {
         state.lastSuccess = msg.lastSuccess;
         state.lastFailed = msg.lastFailed;
         state.nQueued = msg.nQueued;
+        state.pages = msg.pages;
+        state.sort = msg.sort;
 
-        var chtBt = new Chart(document.getElementById("chartBt").getContext("2d")).Bar({
-          labels: msg.recent.map(function(e) {
-            return '#' + e.number;
-          }).reverse(),
-          datasets: [{
-            fillColor: "darkseagreen",
-            strokeColor: "forestgreen",
-            data: msg.recent.map(function(e) {
-              return e.completed - e.started;
-            }).reverse()
-          }]
-        }, {
-          barValueSpacing: 1,
-          barStrokeWidth: 1,
-          barDatasetSpacing: 0
+        // "status" comes again if we change page/sorting. Delete the
+        // old chart and recreate it to prevent flickering of old data
+        if(chtBt)
+          chtBt.destroy();
+        var btScale = timeScale(Math.max(msg.recent.map(v=>{v.completed-v.started})));
+        chtBt = new Chart(document.getElementById("chartBt"), {
+          type: 'bar',
+          data: {
+            labels: msg.recent.map(function(e) {
+              return '#' + e.number;
+            }).reverse(),
+            datasets: [{
+              label: 'Average',
+              type: 'line',
+              data: [{x:0,y:msg.averageRuntime},{x:1,y:msg.averageRuntime}],
+              borderColor: 'steelblue',
+              backgroundColor: 'transparent',
+              xAxisID: 'avg',
+              pointRadius: 0,
+              pointHitRadius: 0,
+              pointHoverRadius: 0,
+            },{
+              label: 'Build time',
+              backgroundColor: (new Array(msg.recent.length)).fill('darkseagreen'),
+              borderColor: (new Array(msg.recent.length)).fill('forestgreen'),
+              data: msg.recent.map(function(e) {
+                return e.completed - e.started;
+              }).reverse()
+            }]
+          },
+          options: {
+            scales:{
+              xAxes:[{},{
+                id: 'avg',
+                type: 'linear',
+                ticks: {
+                  display: false
+                },
+                gridLines: {
+                  display: false,
+                  drawBorder: false
+                }
+              }],
+              yAxes:[{
+                ticks:{userCallback: btScale.scale},
+                scaleLabel:{display: true, labelString: btScale.label}
+              }]
+            },
+            tooltips:{callbacks:{label:(tip, data)=>{
+              return data.datasets[tip.datasetIndex].label + ': ' + tip.yLabel + ' ' + btScale.label.toLowerCase();
+            }}}
+          }
         });
 
         for (var i = 0, n = msg.recent.length; i < n; ++i) {
           if (msg.recent[i].result != "success") {
-            chtBt.datasets[0].bars[n - i - 1].fillColor = "darksalmon";
-            chtBt.datasets[0].bars[n - i - 1].strokeColor = "crimson";
+            chtBt.data.datasets[0].backgroundColor[n - i - 1] = "darksalmon";
+            chtBt.data.datasets[0].borderColor[n - i - 1] = "crimson";
           }
         }
         chtBt.update();
-
       },
       job_queued: function() {
         state.nQueued++;
@@ -477,6 +635,23 @@ var Job = function() {
             break;
           }
         }
+      },
+      page_next: function() {
+        state.sort.page++;
+        this.ws.send(JSON.stringify(state.sort));
+      },
+      page_prev: function() {
+        state.sort.page--;
+        this.ws.send(JSON.stringify(state.sort));
+      },
+      do_sort: function(field) {
+        if(state.sort.field == field) {
+          state.sort.order = state.sort.order == 'asc' ? 'dsc' : 'asc';
+        } else {
+          state.sort.order = 'dsc';
+          state.sort.field = field;
+        }
+        this.ws.send(JSON.stringify(state.sort));
       }
     }
   });
@@ -484,14 +659,14 @@ var Job = function() {
 
 const Run = function() {
   var state = {
-    job: { artifacts: [] },
+    job: { artifacts: [], upstream: {} },
     latestNum: null,
     log: '',
     autoscroll: false
   };
   var firstLog = false;
   var logHandler = function(vm, d) {
-    state.log += ansi_up.ansi_to_html(d.replace(/</g,'&lt;').replace(/>/g,'&gt;'));
+    state.log += ansi_up.ansi_to_html(d.replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\033\[\{([^:]+):(\d+)\033\\/g, (m,$1,$2)=>{return '<a href="/jobs/'+$1+'" onclick="return vroute(this);">'+$1+'</a>:<a href="/jobs/'+$1+'/'+$2+'" onclick="return vroute(this);">#'+$2+'</a>';}));
     vm.$forceUpdate();
     if (!firstLog) {
       firstLog = true;
@@ -518,7 +693,7 @@ const Run = function() {
         this.$forceUpdate();
       },
       job_completed: function(data) {
-        state.job = data;
+        state.job = Object.assign(state.job, data);
         state.jobsRunning = [];
         this.$forceUpdate();
       },
@@ -551,6 +726,27 @@ const Run = function() {
     }
   };
 }();
+
+// For all charts, set miniumum Y to 0
+Chart.scaleService.updateScaleDefaults('linear', {
+    ticks: { suggestedMin: 0 }
+});
+// Don't display legend by default
+Chart.defaults.global.legend.display = false;
+// Plugin to move a DOM item on top of a chart element
+Chart.plugins.register({
+  afterDatasetsDraw: (chart) => {
+    chart.data.datasets.forEach((dataset, i) => {
+      var meta = chart.getDatasetMeta(i);
+      if(dataset.itemid)
+        meta.data.forEach((e,j) => {
+          var pos = e.getCenterPoint();
+          var node = document.getElementById(dataset.itemid[j]);
+          node.style.top = (pos.y - node.clientHeight/2) + 'px';
+        });
+    });
+  }
+});
 
 new Vue({
   el: '#app',

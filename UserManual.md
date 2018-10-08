@@ -26,15 +26,15 @@ Alternatively to the source-based approach shown above, precompiled packages are
 Under Debian:
 
 ```bash
-wget https://github.com/ohwgiles/laminar/releases/download/0.5/laminar-0.5-1-amd64.deb
-sudo apt install laminar-0.5-1-amd64.deb
+wget https://github.com/ohwgiles/laminar/releases/download/0.6/laminar-0.6-1-amd64.deb
+sudo apt install laminar-0.6-1-amd64.deb
 ```
 
 Under CentOS:
 
 ```bash
-wget https://github.com/ohwgiles/laminar/releases/download/0.5/laminar-0.5-1.x86_64.rpm
-sudo yum install laminar-0.5-1.x86_64.rpm
+wget https://github.com/ohwgiles/laminar/releases/download/0.5/laminar-0.6-1.x86_64.rpm
+sudo yum install laminar-0.6-1.x86_64.rpm
 ```
 
 Both install packages will create a new `laminar` user and install (but not activate) a systemd service for launching the laminar daemon.
@@ -390,9 +390,46 @@ cmake $WORKSPACE/myproject
 make -j4
 ```
 
-**CAUTION**: By default, laminar permits multiple simultaneous runs of the same job. If a job can **modify** the workspace, this might result in inconsistent builds when the job has multiple simultaneous runs. This is unlikely to be an issue for nightly builds, but for SCM-triggered builds it will be. To solve this, use [nodes](#Nodes-and-Tags) to restrict simultaneous execution of jobs, or [locks](#Locks) to temporarily take exclusive control of a resource.
+Laminar will automatically create the workspace for a job if it doesn't exist when a job is executed. In this case, the `/var/lib/laminar/cfg/jobs/JOBNAME.init` will be executed if it exists. This is an excellent place to prepare the workspace to a state where subsequent builds can rely on its content:
 
-Laminar will automatically create the workspace for a job if it doesn't exist when a job is executed. In this case, the `/var/lib/laminar/cfg/jobs/JOBNAME.init` will be executed if it exists. This is an excellent place to prepare the workspace to a state where subsequent builds can rely on its content.
+```bash
+#!/bin/bash -e
+echo Initializing workspace
+git clone git@example.com:company/project.git .
+```
+
+**CAUTION**: By default, laminar permits multiple simultaneous runs of the same job. If a job can **modify** the workspace, this might result in inconsistent builds when simultaneous runs access the same content. This is unlikely to be an issue for nightly builds, but for SCM-triggered builds it will be. To solve this, use [nodes](#Nodes-and-Tags) to restrict simultaneous execution of jobs, or consider [flock](https://linux.die.net/man/1/flock).
+
+The following example uses [flock](https://linux.die.net/man/1/flock) to efficiently share a git repository workspace between multiple simultaneous builds:
+
+```bash
+#!/bin/bash -xe
+
+# This script expects to be passed the parameter 'rev' which
+# should refer to a specific git commit in its source repository.
+# The commit ids could have been read from a server-side
+# post-commit git hook, where many commits could have been pushed
+# at once, but we want to check them all individually. This means
+# this job can be executed several times (with different values
+# for $rev) simultaneously.
+
+# Locked subshell for modifying the workspace
+(
+  flock 200
+  cd $WORKSPACE
+  # Download all the latest commits
+  git fetch
+  git checkout $rev
+  cd -
+  # Fast copy (hard-link) the source from the specific checkout
+  # to the build dir. This relies on the fact that git unlinks
+  # during checkout, effectively implementing copy-on-write.
+  cp -al $WORKSPACE/src src
+) 200>$WORKSPACE
+
+# run the (much longer) regular build process
+make -C src
+```
 
 ---
 
@@ -495,50 +532,23 @@ EOF
 
 ---
 
-# Locks
-
-*Locks* are a simple way to control access to shared resources. Any string may be used as a lock name. The command `laminarc lock mylock` locks `mylock`. Subsequent calls to `laminarc lock mylock` will block until `laminarc release mylock` is called a corresponding number of times.
-
-**CAUTION**: Locks are independent of any other job control mechanism in laminar, and will not be released automatically. Making sure calls to lock and release are symmetric is the administrator's responsibility.
-
-An example use builds on the situation described in [Data sharing and Workspaces](#Data-sharing-and-Workspaces), where a large git repository is stored in the workspace. Conisder this run script:
-
-```bash
-#!/bin/bash -x
-
-# This script expects to be passed the parameter `rev` which
-# should refer to a specific git commit in its source repository.
-# The commit ids could have been read from a server-side
-# post-commit git hook, where many commits could have been pushed
-# at once, but we want to check them all individually. This means
-# this job can be executed several times (with different commit ids)
-# at once.
-
-cd $WORKSPACE
-# Acquire a lock for modifying the workspace
-laminarc lock $JOB-workspace
-# Download all the latest commits
-git fetch
-git checkout $rev
-cd -
-# Fast copy (hard-link) the specific checkout to the build dir
-cp -al $WORKSPACE/src src
-# Release the lock to allow other jobs to do the same
-laminarc release $JOB-workspace
-
-# run the (much longer) build process
-set -e
-cmake src
-make
-```
-
----
-
 # Customizing the WebUI
 
 If it exists, the file `/var/lib/laminar/custom/style.css` will be served by laminar and may be used to change the appearance of Laminar's WebUI.
 
 This directory is also a good place to add any extra assets needed for this customization, but note that in this case you will need to serve this directory directly from your [HTTP reverse proxy](#Service-configuration) (highly recommended).
+
+---
+
+# Badges
+
+Laminar will serve a job's current status as a pretty badge at the url `/badge/JOBNAME.svg`. This can be used as a link to your server instance from your Github README.md file or cat blog:
+
+```
+<a href="https://my-example-laminar-server.com/jobs/my-project">
+  <img src="https://my-example-laminar-server.com/badge/my-project.svg">
+</a>
+```
 
 ---
 

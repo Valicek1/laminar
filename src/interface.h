@@ -25,8 +25,6 @@
 #include <memory>
 #include <unordered_map>
 
-typedef std::unordered_map<std::string, std::string> ParamMap;
-
 // Simple struct to define which information a frontend client is interested
 // in, both in initial request phase and real-time updates. It corresponds
 // loosely to frontend URLs
@@ -42,7 +40,10 @@ struct MonitorScope {
     MonitorScope(Type type = HOME, std::string job = std::string(), uint num = 0) :
         type(type),
         job(job),
-        num(num)
+        num(num),
+        page(0),
+        field("number"),
+        order_desc(true)
     {}
 
     // whether this scope wants status information about the given job or run
@@ -60,13 +61,17 @@ struct MonitorScope {
     Type type;
     std::string job;
     uint num = 0;
+    // sorting
+    uint page = 0;
+    std::string field;
+    bool order_desc;
 };
 
 // Represents a (websocket) client that wants to be notified about events
 // matching the supplied scope. Pass instances of this to LaminarInterface
 // registerClient and deregisterClient
 struct LaminarClient {
-    virtual ~LaminarClient() =default;
+    virtual ~LaminarClient() noexcept(false) {}
     virtual void sendMessage(std::string payload) = 0;
     MonitorScope scope;
 };
@@ -79,11 +84,18 @@ struct LaminarWaiter {
     virtual void complete(const Run*) = 0;
 };
 
+// Represents a file mapped in memory. Used to serve artefacts
+struct MappedFile {
+    virtual ~MappedFile() =default;
+    virtual const void* address() = 0;
+    virtual size_t size() = 0;
+};
+
 // The interface connecting the network layer to the application business
 // logic. These methods fulfil the requirements of both the HTTP/Websocket
 // and RPC interfaces.
 struct LaminarInterface {
-    virtual ~LaminarInterface() =default;
+    virtual ~LaminarInterface() {}
 
     // Queues a job, returns immediately. Return value will be nullptr if
     // the supplied name is not a known job.
@@ -117,20 +129,22 @@ struct LaminarInterface {
     virtual bool setParam(std::string job, uint buildNum, std::string param, std::string value) = 0;
 
     // Fetches the content of an artifact given its filename relative to
-    // $LAMINAR_HOME/archive. This shouldn't be used, because the sysadmin
-    // should have configured a real webserver to serve these things.
-    virtual bool getArtefact(std::string path, std::string& result) = 0;
+    // $LAMINAR_HOME/archive. Ideally, this would instead be served by a
+    // proper web server which handles this url.
+    virtual kj::Maybe<kj::Own<const kj::ReadableFile>> getArtefact(std::string path) = 0;
+
+    // Given the name of a job, populate the provided string reference with
+    // SVG content describing the last known state of the job. Returns false
+    // if the job is unknown.
+    virtual bool handleBadgeRequest(std::string job, std::string& badge) = 0;
 
     // Fetches the content of $LAMINAR_HOME/custom/style.css or an empty
-    // string. This shouldn't be used, because the sysadmin should have
-    // configured a real webserver to serve these things.
+    // string. Ideally, this would instead be served by a proper web server
+    // which handles this url.
     virtual std::string getCustomCss() = 0;
 
     // Abort all running jobs
     virtual void abortAll() = 0;
-
-    // Callback for laminar to reap child processes.
-    virtual void reapChildren() = 0;
 
     // Callback to handle a configuration modification notification
     virtual void notifyConfigChanged() = 0;
