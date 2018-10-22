@@ -130,6 +130,25 @@ bool Laminar::setParam(std::string job, uint buildNum, std::string param, std::s
     return false;
 }
 
+const std::list<std::shared_ptr<Run>>& Laminar::listQueuedJobs() {
+    return queuedJobs;
+}
+
+const RunSet& Laminar::listRunningJobs() {
+    return activeJobs;
+}
+
+std::list<std::string> Laminar::listKnownJobs() {
+    std::list<std::string> res;
+    KJ_IF_MAYBE(dir, fsHome->tryOpenSubdir(kj::Path{"cfg","jobs"})) {
+        for(kj::Directory::Entry& entry : (*dir)->listEntries()) {
+            if(entry.name.endsWith(".run")) {
+                res.emplace_back(entry.name.cStr(), entry.name.findLast('.').orDefault(0));
+            }
+        }
+    }
+    return res;
+}
 
 void Laminar::populateArtifacts(Json &j, std::string job, uint num) const {
     kj::Path runArchive{job,std::to_string(num)};
@@ -458,8 +477,8 @@ void Laminar::run() {
     const char* listen_http = getenv("LAMINAR_BIND_HTTP") ?: INTADDR_HTTP_DEFAULT;
 
     srv = new Server(*this, listen_rpc, listen_http);
-    srv->addWatchPath((homePath/"cfg"/"nodes").toString().cStr());
-    srv->addWatchPath((homePath/"cfg"/"jobs").toString().cStr());
+    srv->addWatchPath((homePath/"cfg"/"nodes").toString(true).cStr());
+    srv->addWatchPath((homePath/"cfg"/"jobs").toString(true).cStr());
     srv->start();
 }
 
@@ -475,26 +494,26 @@ bool Laminar::loadConfiguration() {
 
     KJ_IF_MAYBE(nodeDir, fsHome->tryOpenSubdir(kj::Path{"cfg","nodes"})) {
         for(kj::Directory::Entry& entry : (*nodeDir)->listEntries()) {
-            if(entry.type != kj::FsNode::Type::FILE || !entry.name.endsWith(".conf"))
+            if(!entry.name.endsWith(".conf"))
                 continue;
 
-            StringMap conf = parseConfFile((homePath/entry.name).toString().cStr());
+            StringMap conf = parseConfFile((homePath/"cfg"/"nodes"/entry.name).toString(true).cStr());
 
-            std::string nodeName(entry.name.cStr(), entry.name.findLast('.').orDefault(0)-1);
+            std::string nodeName(entry.name.cStr(), entry.name.findLast('.').orDefault(0));
             auto existingNode = nodes.find(nodeName);
             std::shared_ptr<Node> node = existingNode == nodes.end() ? nodes.emplace(nodeName, std::shared_ptr<Node>(new Node)).first->second : existingNode->second;
             node->name = nodeName;
             node->numExecutors = conf.get<int>("EXECUTORS", 6);
 
-            std::string tags = conf.get<std::string>("TAGS");
-            if(!tags.empty()) {
-                std::istringstream iss(tags);
-                std::set<std::string> tagList;
+            std::string tagString = conf.get<std::string>("TAGS");
+            std::set<std::string> tagList;
+            if(!tagString.empty()) {
+                std::istringstream iss(tagString);
                 std::string tag;
                 while(std::getline(iss, tag, ','))
                     tagList.insert(tag);
-                node->tags = tagList;
             }
+            std::swap(node->tags, tagList);
 
             knownNodes.insert(nodeName);
         }
@@ -511,6 +530,7 @@ bool Laminar::loadConfiguration() {
 
     // add a default node
     if(nodes.empty()) {
+        LLOG(INFO, "Creating a default node with 6 executors");
         std::shared_ptr<Node> node(new Node);
         node->name = "";
         node->numExecutors = 6;
@@ -519,11 +539,11 @@ bool Laminar::loadConfiguration() {
 
     KJ_IF_MAYBE(jobsDir, fsHome->tryOpenSubdir(kj::Path{"cfg","jobs"})) {
         for(kj::Directory::Entry& entry : (*jobsDir)->listEntries()) {
-            if(entry.type != kj::FsNode::Type::FILE || !entry.name.endsWith(".conf"))
+            if(!entry.name.endsWith(".conf"))
                 continue;
-            StringMap conf = parseConfFile((homePath/entry.name).toString().cStr());
+            StringMap conf = parseConfFile((homePath/"cfg"/"jobs"/entry.name).toString(true).cStr());
 
-            std::string jobName(entry.name.cStr(), entry.name.findLast('.').orDefault(0)-1);
+            std::string jobName(entry.name.cStr(), entry.name.findLast('.').orDefault(0));
 
             std::string tags = conf.get<std::string>("TAGS");
             if(!tags.empty()) {
@@ -568,9 +588,18 @@ std::shared_ptr<Run> Laminar::queueJob(std::string name, ParamMap params) {
 
 void Laminar::notifyConfigChanged()
 {
+    LLOG(INFO, "Reloading configuration");
     loadConfiguration();
     // config change may allow stuck jobs to dequeue
     assignNewJobs();
+}
+
+bool Laminar::abort(std::string job, uint buildNum) {
+    if(Run* run = activeRun(job, buildNum)) {
+        run->abort(true);
+        return true;
+    }
+    return false;
 }
 
 void Laminar::abortAll() {
@@ -815,7 +844,7 @@ bool Laminar::handleBadgeRequest(std::string job, std::string &badge) {
     char* svg = NULL;
     asprintf(&svg,
 R"x(
-<svg xmlns="http://www.w3.org/2000/svg">
+<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="20">
   <clipPath id="clip">
     <rect width="%d" height="20" rx="4"/>
   </clipPath>
@@ -833,7 +862,7 @@ R"x(
     <rect x="%d" width="%d" height="20" fill="url(#status)"/>
     <text x="%d" y="14" fill="#000">%s</text>
   </g>
-</svg>)x", jobNameWidth+statusWidth, gradient1, gradient2, jobNameWidth, jobNameWidth/2+1, job.data(), jobNameWidth, statusWidth, jobNameWidth+statusWidth/2, status.data());
+</svg>)x", jobNameWidth+statusWidth, jobNameWidth+statusWidth, gradient1, gradient2, jobNameWidth, jobNameWidth/2+1, job.data(), jobNameWidth, statusWidth, jobNameWidth+statusWidth/2, status.data());
     badge = svg;
     return true;
 }
