@@ -259,6 +259,11 @@ private:
             }
             // unhandled/unknown message
             return lc.ws->disconnect();
+        }, [](kj::Exception&& e){
+            // server logs suggest early catching here avoids fatal exception later
+            // TODO: reproduce in unit test
+            KJ_LOG(WARNING, e.getDescription());
+            return kj::READY_NOW;
         });
     }
 
@@ -502,8 +507,8 @@ kj::Promise<void> Server::handleFdRead(kj::AsyncInputStream* stream, char* buffe
 }
 
 void Server::taskFailed(kj::Exception &&exception) {
-    // An unexpected http connection close can cause an exception, so don't re-throw.
-    // TODO: consider re-throwing selected exceptions
-    LLOG(INFO, exception);
     //kj::throwFatalException(kj::mv(exception));
+    // prettier
+    fprintf(stderr, "fatal: %s\n", exception.getDescription().cStr());
+    exit(EXIT_FAILURE);
 }
