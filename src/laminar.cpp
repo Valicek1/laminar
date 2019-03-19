@@ -1,5 +1,5 @@
 ///
-/// Copyright 2015-2018 Oliver Giles
+/// Copyright 2015-2019 Oliver Giles
 ///
 /// This file is part of Laminar
 ///
@@ -122,6 +122,52 @@ void Laminar::deregisterWaiter(LaminarWaiter *waiter) {
     waiters.erase(waiter);
 }
 
+uint Laminar::latestRun(std::string job) {
+    auto it = activeJobs.byJobName().equal_range(job);
+    if(it.first == it.second) {
+        uint result = 0;
+        db->stmt("SELECT MAX(number) FROM builds WHERE name = ?")
+                .bind(job)
+                .fetch<uint>([&](uint x){
+            result = x;
+        });
+        return result;
+    } else {
+        return (*--it.second)->build;
+    }
+}
+
+// TODO: reunify with sendStatus. The difference is that this method is capable of
+// returning "not found" to the caller, and sendStatus isn't
+bool Laminar::handleLogRequest(std::string name, uint num, std::string& output, bool& complete) {
+    if(Run* run = activeRun(name, num)) {
+        output = run->log;
+        complete = false;
+        return true;
+    } else { // it must be finished, fetch it from the database
+        db->stmt("SELECT output, outputLen FROM builds WHERE name = ? AND number = ?")
+                .bind(name, num)
+                .fetch<str,int>([&](str maybeZipped, unsigned long sz) {
+            str log(sz,'\0');
+            if(sz >= COMPRESS_LOG_MIN_SIZE) {
+                int res = ::uncompress((uint8_t*) log.data(), &sz,
+                                       (const uint8_t*) maybeZipped.data(), maybeZipped.size());
+                if(res == Z_OK)
+                    std::swap(output, log);
+                else
+                    LLOG(ERROR, "Failed to uncompress log", res);
+            } else {
+                std::swap(output, maybeZipped);
+            }
+        });
+        if(output.size()) {
+            complete = true;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool Laminar::setParam(std::string job, uint buildNum, std::string param, std::string value) {
     if(Run* run = activeRun(job, buildNum)) {
         run->params[param] = value;
@@ -187,6 +233,7 @@ void Laminar::sendStatus(LaminarClient* client) {
                     client->sendMessage(maybeZipped);
                 }
             });
+            client->notifyJobFinished();
         }
         return;
     }
@@ -645,8 +692,8 @@ bool Laminar::tryStartRun(std::shared_ptr<Run> run, int queueIndex) {
             });
 
             // Actually schedules the Run steps
-            kj::Promise<void> exec = handleRunStep(run.get()).then([this,r=run.get()]{
-                runFinished(r);
+            kj::Promise<void> exec = handleRunStep(run.get()).then([=]{
+                runFinished(run.get());
             });
             if(run->timeout > 0) {
                 exec = exec.attach(srv->addTimeout(run->timeout, [r=run.get()](){
@@ -785,6 +832,7 @@ void Laminar::runFinished(Run * r) {
     for(LaminarClient* c : clients) {
         if(c->scope.wantsStatus(r->name, r->build))
             c->sendMessage(msg);
+        c->notifyJobFinished();
     }
 
     // notify the waiters
@@ -816,6 +864,8 @@ void Laminar::runFinished(Run * r) {
             break;
         fsHome->remove(d);
     }
+
+    fsHome->symlink(kj::Path{"archive", r->name, "latest"}, std::to_string(r->build), kj::WriteMode::CREATE|kj::WriteMode::MODIFY);
 
     // in case we freed up an executor, check the queue
     assignNewJobs();
