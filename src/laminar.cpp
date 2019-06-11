@@ -56,7 +56,7 @@ namespace {
 // Default values when none were supplied in $LAMINAR_CONF_FILE (/etc/laminar.conf)
 constexpr const char* INTADDR_RPC_DEFAULT = "unix-abstract:laminar";
 constexpr const char* INTADDR_HTTP_DEFAULT = "*:8080";
-constexpr const char* ARCHIVE_URL_DEFAULT = "/archive";
+constexpr const char* ARCHIVE_URL_DEFAULT = "/archive/";
 }
 
 // short syntax helpers for kj::Path
@@ -75,11 +75,15 @@ Laminar::Laminar(const char *home) :
     homePath(kj::Path::parse(&home[1])),
     fsHome(kj::newDiskFilesystem()->getRoot().openSubdir(homePath, kj::WriteMode::MODIFY))
 {
-    KJ_ASSERT(home[0] == '/');
+    LASSERT(home[0] == '/');
 
     archiveUrl = ARCHIVE_URL_DEFAULT;
-    if(char* envArchive = getenv("LAMINAR_ARCHIVE_URL"))
+    if(char* envArchive = getenv("LAMINAR_ARCHIVE_URL")) {
         archiveUrl = envArchive;
+        if(archiveUrl.back() != '/')
+            archiveUrl.append("/");
+    }
+
     numKeepRunDirs = 0;
 
     db = new Database((homePath/"laminar.sqlite").toString(true).cStr());

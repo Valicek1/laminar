@@ -69,6 +69,8 @@ For Apache, see [Apache Reverse Proxy](https://httpd.apache.org/docs/2.4/howto/r
 
 If you use [artefacts](#Archiving-artefacts), note that Laminar is not designed as a file server, and better performance will be achieved by allowing the frontend web server to directly serve the archive directory directly (e.g. using a `Location` directive).
 
+If you use a reverse proxy to host Laminar at a subfolder instead of a subdomain root, the `<base href>` needs to be updated to ensure all links point to their proper targets. This can be done by setting `LAMINAR_BASE_URL` in `/etc/laminar.conf`.
+
 ## Set the page title
 
 Change `LAMINAR_TITLE` in `/etc/laminar.conf` to your preferred page title. For further WebUI customization, consider using a [custom style sheet](#Customizing-the-WebUI).
@@ -625,7 +627,7 @@ Finally, variables supplied on the command-line call to `laminarc queue`, `lamin
 
 - `queue [JOB [PARAMS...]]...` adds one or more jobs to the queue with optional parameters, returning immediately.
 - `start [JOB [PARAMS...]]...` starts one or more jobs with optional parameters, returning when the jobs begin execution.
-- `run [JOB [PARAMS...]]...` triggers one or more jobs with optional parameters and waits for the completion of all jobs. Returns a non-zero error code if any job failed.
+- `run [JOB [PARAMS...]]...` triggers one or more jobs with optional parameters and waits for the completion of all jobs.
 - `set [VARIABLE=VALUE]...` sets one or more variables to be exported in subsequent scripts for the run identified by the `$JOB` and `$RUN` environment variables
 - `show-jobs` shows the known jobs on the server (`$LAMINAR_HOME/cfg/jobs/*.run`).
 - `show-running` shows the currently running jobs with their numbers.
@@ -633,3 +635,5 @@ Finally, variables supplied on the command-line call to `laminarc queue`, `lamin
 - `abort JOB NUMBER` manually aborts a currently running job by name and number.
 
 `laminarc` connects to `laminard` using the address supplied by the `LAMINAR_HOST` environment variable. If it is not set, `laminarc` will first attempt to use `LAMINAR_BIND_RPC`, which will be available if `laminarc` is executed from a script within `laminard`. If neither `LAMINAR_HOST` nor `LAMINAR_BIND_RPC` is set, `laminarc` will assume a default host of `unix-abstract:laminar`.
+
+All commands return zero on success or a non-zero code if the command could not be executed. `laminarc run` will return a non-zero exit status if any executed job failed.
