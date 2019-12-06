@@ -2,20 +2,17 @@
 
 OUTPUT_DIR=$PWD
 
-SOURCE_DIR=$(readlink -f $(dirname ${BASH_SOURCE[0]}))
+SOURCE_DIR=$(readlink -f $(dirname ${BASH_SOURCE[0]})/..)
 
-VERSION=$(cd "$SOURCE_DIR" && git describe --tags --abbrev=8 --dirty | tr - .)
+VERSION=$(cd "$SOURCE_DIR" && git describe --tags --abbrev=8 --dirty | tr - .)~upstream_centos8
 
 DOCKER_TAG=$(docker build -q - <<EOS
-FROM centos:7
-RUN yum -y install epel-release centos-release-scl && yum-config-manager --enable rhel-server-rhscl-7-rpms && yum -y install rpm-build cmake3 make devtoolset-7-gcc-c++ wget sqlite-devel boost-devel zlib-devel
+FROM centos:8
+RUN dnf -y install rpm-build cmake make gcc-c++ wget sqlite-devel boost-devel zlib-devel
 EOS
 )
 
 docker run --rm -i -v $SOURCE_DIR:/root/rpmbuild/SOURCES/laminar-$VERSION:ro -v $OUTPUT_DIR:/output $DOCKER_TAG bash -xe <<EOS
-# for new gcc
-export PATH=/opt/rh/devtoolset-7/root/usr/bin:\$PATH
-
 mkdir /build
 cd /build
 
@@ -35,7 +32,7 @@ make -j4
 make install
 
 cd /build/rapidjson-1.1.0/
-cmake3 -DRAPIDJSON_BUILD_EXAMPLES=off .
+cmake -DRAPIDJSON_BUILD_EXAMPLES=off .
 make install
 
 cd
@@ -46,7 +43,7 @@ Version: $VERSION
 Release: 1
 License: GPL
 BuildRequires: systemd-units
-Requires: sqlite zlib
+Requires: sqlite-libs zlib
 
 %description
 Lightweight Continuous Integration Service
@@ -54,7 +51,7 @@ Lightweight Continuous Integration Service
 %prep
 
 %build
-cmake3 -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/ -DSYSTEMD_UNITDIR=%{_unitdir} %{_sourcedir}/laminar-$VERSION
+cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/ -DSYSTEMD_UNITDIR=%{_unitdir} %{_sourcedir}/laminar-$VERSION
 pwd
 make
 

@@ -10,7 +10,16 @@ See [the website](https://laminar.ohwg.net) and the [documentation](https://lami
 
 ## Building from source
 
-First install development packages for `capnproto (version 0.7.0 or newer)`, `rapidjson`, `sqlite` and `boost` (for the header-only `multi_index_container` library) from your distribution's repository or other source. Then:
+First install development packages for `capnproto (version 0.7.0 or newer)`, `rapidjson`, `sqlite` and `boost` (for the header-only `multi_index_container` library) from your distribution's repository or other source.
+
+On Debian Buster, this can be done with:
+
+```bash
+sudo apt install \
+		 capnproto cmake g++ libboost-dev libcapnp-dev libsqlite-dev libsqlite3-dev make rapidjson-dev zlib1g-dev
+```
+
+Then compile and install laminar with:
 
 ```bash
 git clone https://github.com/ohwgiles/laminar.git
@@ -22,3 +31,6 @@ sudo make install
 
 `make install` includes a systemd unit file. If you intend to use it, consider creating a new user `laminar` or modifying the user specified in the unit file.
 
+## Packaging for distributions
+
+The `pkg` directory contains shell scripts which use docker to build native packages (deb,rpm) for common Linux distributions. Note that these are very simple packages which may not completely conform to the distribution's packaging guidelines, however they may serve as a starting point for creating an official package, or may be useful if the official package lags.

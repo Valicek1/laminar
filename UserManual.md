@@ -43,6 +43,33 @@ Both install packages will create a new `laminar` user and install (but not acti
 
 See the [development README](https://github.com/ohwgiles/laminar) for instructions for installing from source.
 
+## Building for Docker
+
+You can build an image that runs `laminard` by default, and contains `laminarc` for use based on `alpine:edge` using the `Dockerfile` in the `docker/` directory.
+
+```bash
+# from the repository root:
+docker build [-t image:tag] -f docker/Dockerfile .
+```
+
+Keep in mind that this is meant to be used as a base image to build from, so it contains only the minimum packages required to run laminar. The only shell available by default is sh and it does not even have ssh or git. You can use this image to run a basic build server, but it is recommended that you build a custom image from this base to better suit your needs.
+
+The container will execute `laminard` by default. To start a laminar server with docker you can simply run the image as a daemon.
+
+```bash
+docker run -d --name laminar_server -p 8080:8080 [-v laminardir|laminar.conf] laminar:latest
+```
+
+You can customize laminar and persist your data by mounting your laminar directory to `/var/lib/laminar` and/or mounting a custom configuration file to `/etc/laminar.conf`.
+
+Executing `laminarc` may be done in any of the usual ways, for example:
+
+```bash
+docker exec -i laminar_server laminarc queue example_task
+```
+
+Alternatively, you might [use an external `laminarc`](#Triggering-on-a-remote-laminar-instance).
+
 ---
 
 # Service configuration
@@ -61,13 +88,11 @@ Do not attempt to run laminar on port 80. This requires running as `root`, and L
 
 ## Running behind a reverse proxy
 
-Laminar relies on WebSockets to provide a responsive, auto-updating display without polling. This may require extra support from your frontend webserver.
+A reverse proxy is required if you want Laminar to share a port with other web services. It is also recommended to improve performance by serving artefacts directly or providing a caching layer for static assets.
 
-For nginx, see [NGINX Reverse Proxy](https://www.nginx.com/resources/admin-guide/reverse-proxy/) and [WebSocket proxying](http://nginx.org/en/docs/http/websocket.html).
+If you use [artefacts](#Archiving-artefacts), note that Laminar is not designed as a file server, and better performance will be achieved by allowing the frontend web server to serve the archive directory directly (e.g. using a `Location` directive).
 
-For Apache, see [Apache Reverse Proxy](https://httpd.apache.org/docs/2.4/howto/reverse_proxy.html) and [mod_proxy_wstunnel](https://httpd.apache.org/docs/2.4/mod/mod_proxy_wstunnel.html).
-
-If you use [artefacts](#Archiving-artefacts), note that Laminar is not designed as a file server, and better performance will be achieved by allowing the frontend web server to directly serve the archive directory directly (e.g. using a `Location` directive).
+Laminar uses Sever Sent Events to provide a responsive, auto-updating display without polling. Most frontend webservers should handle this without any extra configuration.
 
 If you use a reverse proxy to host Laminar at a subfolder instead of a subdomain root, the `<base href>` needs to be updated to ensure all links point to their proper targets. This can be done by setting `LAMINAR_BASE_URL` in `/etc/laminar.conf`.
 

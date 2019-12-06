@@ -2,9 +2,9 @@
 
 OUTPUT_DIR=$PWD
 
-SOURCE_DIR=$(readlink -f $(dirname ${BASH_SOURCE[0]}))
+SOURCE_DIR=$(readlink -f $(dirname ${BASH_SOURCE[0]})/..)
 
-VERSION=$(cd "$SOURCE_DIR" && git describe --tags --abbrev=8 --dirty)
+VERSION=$(cd "$SOURCE_DIR" && git describe --tags --abbrev=8 --dirty)-1~upstream-debian9
 
 DOCKER_TAG=$(docker build -q - <<EOS
 FROM debian:9-slim
@@ -73,6 +73,7 @@ Maintainer: Oliver Giles <web ohwg net>
 Depends: libsqlite3-0, zlib1g
 Description: Lightweight Continuous Integration Service
 EOF
+echo /etc/laminar.conf > laminar/DEBIAN/conffiles
 cat <<EOF > laminar/DEBIAN/postinst
 #!/bin/bash
 echo Creating laminar user with home in /var/lib/laminar
@@ -83,5 +84,5 @@ EOF
 chmod +x laminar/DEBIAN/postinst
 
 dpkg-deb --build laminar
-mv laminar.deb /output/laminar-$VERSION-1-armhf.deb
+mv laminar.deb /output/laminar_${VERSION}_armhf.deb
 EOS
