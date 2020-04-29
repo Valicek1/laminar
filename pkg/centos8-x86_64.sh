@@ -60,7 +60,7 @@ make
 
 %files
 %{_bindir}/laminarc
-%{_bindir}/laminard
+%{_sbindir}/laminard
 %{_unitdir}/laminar.service
 %config(noreplace) %{_sysconfdir}/laminar.conf
 %{_datarootdir}/bash-completion/completions/laminarc
@@ -69,7 +69,7 @@ make
 %post
 echo Creating laminar user with home in %{_sharedstatedir}/laminar
 useradd -r -d %{_sharedstatedir}/laminar -s %{_sbindir}/nologin laminar
-mkdir -p %{_sharedstatedir}/laminar/cfg/{jobs,nodes,scripts}
+mkdir -p %{_sharedstatedir}/laminar/cfg/{jobs,contexts,scripts}
 chown -R laminar: %{_sharedstatedir}/laminar
 EOF
 

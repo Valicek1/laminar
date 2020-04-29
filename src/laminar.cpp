@@ -76,6 +76,11 @@ Laminar::Laminar(Server &server, Settings settings) :
 {
     LASSERT(settings.home[0] == '/');
 
+    if(fsHome->exists(homePath/"cfg"/"nodes")) {
+        LLOG(ERROR, "Found node configuration directory cfg/nodes. Nodes have been deprecated, please migrate to contexts. Laminar will now exit.");
+        exit(EXIT_FAILURE);
+    }
+
     archiveUrl = settings.archive_url;
     if(archiveUrl.back() != '/')
         archiveUrl.append("/");
@@ -104,8 +109,15 @@ Laminar::Laminar(Server &server, Settings settings) :
         loadConfiguration();
         // config change may allow stuck jobs to dequeue
         assignNewJobs();
-    }).addPath((homePath/"cfg"/"nodes").toString(true).cStr())
-      .addPath((homePath/"cfg"/"jobs").toString(true).cStr());
+    }).addPath((homePath/"cfg"/"contexts").toString(true).cStr())
+      .addPath((homePath/"cfg"/"jobs").toString(true).cStr())
+      .addPath((homePath/"cfg").toString(true).cStr()); // for groups.conf
+
+    loadCustomizations();
+    srv.watchPaths([this]{
+        LLOG(INFO, "Reloading customizations");
+        loadCustomizations();
+    }).addPath((homePath/"custom").toString(true).cStr());
 
     srv.listenRpc(*rpc, settings.bind_rpc);
     srv.listenHttp(*http, settings.bind_http);
@@ -113,6 +125,14 @@ Laminar::Laminar(Server &server, Settings settings) :
     // Load configuration, may be called again in response to an inotify event
     // that the configuration files have been modified
     loadConfiguration();
+}
+
+void Laminar::loadCustomizations() {
+    KJ_IF_MAYBE(templ, fsHome->tryOpenFile(kj::Path{"custom","index.html"})) {
+        http->setHtmlTemplate((*templ)->readAllText().cStr());
+    } else {
+        http->setHtmlTemplate();
+    }
 }
 
 uint Laminar::latestRun(std::string job) {
@@ -283,7 +303,7 @@ std::string Laminar::getStatus(MonitorScope scope) {
             const std::shared_ptr<Run> run = *it;
             j.StartObject();
             j.set("number", run->build);
-            j.set("node", run->node->name);
+            j.set("context", run->context->name);
             j.set("started", run->startedAt);
             j.set("result", to_string(RunState::RUNNING));
             j.set("reason", run->reason());
@@ -311,7 +331,8 @@ std::string Laminar::getStatus(MonitorScope scope) {
             j.set("number", build).set("started", started);
             j.EndObject();
         });
-
+        auto desc = jobDescriptions.find(scope.job);
+        j.set("description", desc == jobDescriptions.end() ? "" : desc->second);
     } else if(scope.type == MonitorScope::ALL) {
         j.startArray("jobs");
         db->stmt("SELECT name,number,startedAt,completedAt,result FROM builds b JOIN (SELECT name n,MAX(number) l FROM builds GROUP BY n) q ON b.name = q.n AND b.number = q.l")
@@ -322,11 +343,6 @@ std::string Laminar::getStatus(MonitorScope scope) {
             j.set("result", to_string(RunState(result)));
             j.set("started", started);
             j.set("completed", completed);
-            j.startArray("tags");
-            for(const str& t: jobTags[name]) {
-                j.String(t.c_str());
-            }
-            j.EndArray();
             j.EndObject();
         });
         j.EndArray();
@@ -335,24 +351,23 @@ std::string Laminar::getStatus(MonitorScope scope) {
             j.StartObject();
             j.set("name", run->name);
             j.set("number", run->build);
-            j.set("node", run->node->name);
+            j.set("context", run->context->name);
             j.set("started", run->startedAt);
-            j.startArray("tags");
-            for(const str& t: jobTags[run->name]) {
-                j.String(t.c_str());
-            }
-            j.EndArray();
             j.EndObject();
         }
         j.EndArray();
+        j.startObject("groups");
+        for(const auto& group : jobGroups)
+            j.set(group.first.c_str(), group.second);
+        j.EndObject();
     } else { // Home page
         j.startArray("recent");
         db->stmt("SELECT * FROM builds ORDER BY completedAt DESC LIMIT 15")
-        .fetch<str,uint,str,time_t,time_t,time_t,int>([&](str name,uint build,str node,time_t,time_t started,time_t completed,int result){
+        .fetch<str,uint,str,time_t,time_t,time_t,int>([&](str name,uint build,str context,time_t,time_t started,time_t completed,int result){
             j.StartObject();
             j.set("name", name)
              .set("number", build)
-             .set("node", node)
+             .set("context", context)
              .set("started", started)
              .set("completed", completed)
              .set("result", to_string(RunState(result)))
@@ -364,7 +379,7 @@ std::string Laminar::getStatus(MonitorScope scope) {
             j.StartObject();
             j.set("name", run->name);
             j.set("number", run->build);
-            j.set("node", run->node->name);
+            j.set("context", run->context->name);
             j.set("started", run->startedAt);
             db->stmt("SELECT completedAt - startedAt FROM builds WHERE name = ? ORDER BY completedAt DESC LIMIT 1")
              .bind(run->name)
@@ -383,10 +398,10 @@ std::string Laminar::getStatus(MonitorScope scope) {
         j.EndArray();
         int execTotal = 0;
         int execBusy = 0;
-        for(const auto& it : nodes) {
-            const std::shared_ptr<Node>& node = it.second;
-            execTotal += node->numExecutors;
-            execBusy += node->busyExecutors;
+        for(const auto& it : contexts) {
+            const std::shared_ptr<Context>& context = it.second;
+            execTotal += context->numExecutors;
+            execBusy += context->busyExecutors;
         }
         j.set("executorsTotal", execTotal);
         j.set("executorsBusy", execBusy);
@@ -488,51 +503,41 @@ bool Laminar::loadConfiguration() {
     if(const char* ndirs = getenv("LAMINAR_KEEP_RUNDIRS"))
         numKeepRunDirs = static_cast<uint>(atoi(ndirs));
 
-    std::set<std::string> knownNodes;
+    std::set<std::string> knownContexts;
 
-    KJ_IF_MAYBE(nodeDir, fsHome->tryOpenSubdir(kj::Path{"cfg","nodes"})) {
-        for(kj::Directory::Entry& entry : (*nodeDir)->listEntries()) {
+    KJ_IF_MAYBE(contextsDir, fsHome->tryOpenSubdir(kj::Path{"cfg","contexts"})) {
+        for(kj::Directory::Entry& entry : (*contextsDir)->listEntries()) {
             if(!entry.name.endsWith(".conf"))
                 continue;
 
-            StringMap conf = parseConfFile((homePath/"cfg"/"nodes"/entry.name).toString(true).cStr());
+            StringMap conf = parseConfFile((homePath/"cfg"/"contexts"/entry.name).toString(true).cStr());
 
-            std::string nodeName(entry.name.cStr(), entry.name.findLast('.').orDefault(0));
-            auto existingNode = nodes.find(nodeName);
-            std::shared_ptr<Node> node = existingNode == nodes.end() ? nodes.emplace(nodeName, std::shared_ptr<Node>(new Node)).first->second : existingNode->second;
-            node->name = nodeName;
-            node->numExecutors = conf.get<int>("EXECUTORS", 6);
+            std::string name(entry.name.cStr(), entry.name.findLast('.').orDefault(0));
+            auto existing = contexts.find(name);
+            std::shared_ptr<Context> context = existing == contexts.end() ? contexts.emplace(name, std::shared_ptr<Context>(new Context)).first->second : existing->second;
+            context->name = name;
+            context->numExecutors = conf.get<int>("EXECUTORS", 6);
 
-            std::string tagString = conf.get<std::string>("TAGS");
-            std::set<std::string> tagList;
-            if(!tagString.empty()) {
-                std::istringstream iss(tagString);
-                std::string tag;
-                while(std::getline(iss, tag, ','))
-                    tagList.insert(tag);
-            }
-            std::swap(node->tags, tagList);
-
-            knownNodes.insert(nodeName);
+            knownContexts.insert(name);
         }
     }
 
-    // remove any nodes whose config files disappeared.
-    // if there are no known nodes, take care not to remove and re-add the default node
-    for(auto it = nodes.begin(); it != nodes.end();) {
-        if((it->first == "" && knownNodes.size() == 0) || knownNodes.find(it->first) != knownNodes.end())
+    // remove any contexts whose config files disappeared.
+    // if there are no known contexts, take care not to remove and re-add the default context.
+    for(auto it = contexts.begin(); it != contexts.end();) {
+        if((it->first == "default" && knownContexts.size() == 0) || knownContexts.find(it->first) != knownContexts.end())
             it++;
         else
-            it = nodes.erase(it);
+            it = contexts.erase(it);
     }
 
-    // add a default node
-    if(nodes.empty()) {
-        LLOG(INFO, "Creating a default node with 6 executors");
-        std::shared_ptr<Node> node(new Node);
-        node->name = "";
-        node->numExecutors = 6;
-        nodes.emplace("", node);
+    // add a default context
+    if(contexts.empty()) {
+        LLOG(INFO, "Creating a default context with 6 executors");
+        std::shared_ptr<Context> context(new Context);
+        context->name = "default";
+        context->numExecutors = 6;
+        contexts.emplace("default", context);
     }
 
     KJ_IF_MAYBE(jobsDir, fsHome->tryOpenSubdir(kj::Path{"cfg","jobs"})) {
@@ -543,18 +548,28 @@ bool Laminar::loadConfiguration() {
 
             std::string jobName(entry.name.cStr(), entry.name.findLast('.').orDefault(0));
 
-            std::string tags = conf.get<std::string>("TAGS");
-            if(!tags.empty()) {
-                std::istringstream iss(tags);
-                std::set<std::string> tagList;
-                std::string tag;
-                while(std::getline(iss, tag, ','))
-                    tagList.insert(tag);
-                jobTags[jobName] = tagList;
-            }
+            std::string ctxPtns = conf.get<std::string>("CONTEXTS");
 
+            if(!ctxPtns.empty()) {
+                std::istringstream iss(ctxPtns);
+                std::set<std::string> ctxPtnList;
+                std::string ctx;
+                while(std::getline(iss, ctx, ','))
+                    ctxPtnList.insert(ctx);
+                jobContexts[jobName].swap(ctxPtnList);
+            }
+            std::string desc = conf.get<std::string>("DESCRIPTION");
+            if(!desc.empty()) {
+                jobDescriptions[jobName] = desc;
+            }
         }
     }
+
+    jobGroups.clear();
+    KJ_IF_MAYBE(groupsConf, fsHome->tryOpenFile(kj::Path{"cfg","groups.conf"}))
+        jobGroups = parseConfFile((homePath/"cfg"/"groups.conf").toString(true).cStr());
+    if(jobGroups.empty())
+        jobGroups["All Jobs"] = ".*";
 
     return true;
 }
@@ -564,6 +579,10 @@ std::shared_ptr<Run> Laminar::queueJob(std::string name, ParamMap params) {
         LLOG(ERROR, "Non-existent job", name);
         return nullptr;
     }
+
+    // If the job has no contexts (maybe there is no .conf file at all), add the default context
+    if(jobContexts[name].empty())
+        jobContexts.at(name).insert("default");
 
     std::shared_ptr<Run> run = std::make_shared<Run>(name, kj::mv(params), homePath.clone());
     queuedJobs.push_back(run);
@@ -581,48 +600,25 @@ std::shared_ptr<Run> Laminar::queueJob(std::string name, ParamMap params) {
 }
 
 bool Laminar::abort(std::string job, uint buildNum) {
-    if(Run* run = activeRun(job, buildNum)) {
-        run->abort(true);
-        return true;
-    }
+    if(Run* run = activeRun(job, buildNum))
+        return run->abort();
     return false;
 }
 
 void Laminar::abortAll() {
     for(std::shared_ptr<Run> run : activeJobs) {
-        run->abort(false);
+        run->abort();
     }
-}
-
-bool Laminar::nodeCanQueue(const Node& node, std::string jobName) const {
-    // if a node is too busy, it can't take the job
-    if(node.busyExecutors >= node.numExecutors)
-        return false;
-
-    // if the node has no tags, allow the build
-    if(node.tags.size() == 0)
-        return true;
-
-    auto it = jobTags.find(jobName);
-    // if the job has no tags, it cannot be run on this node
-    if(it == jobTags.end())
-        return false;
-
-    // otherwise, allow the build if job and node have a tag in common
-    for(const std::string& tag : it->second) {
-        if(node.tags.find(tag) != node.tags.end())
-            return true;
-    }
-
-    return false;
 }
 
 bool Laminar::tryStartRun(std::shared_ptr<Run> run, int queueIndex) {
-    for(auto& sn : nodes) {
-        std::shared_ptr<Node> node = sn.second;
+    for(auto& sc : contexts) {
+        std::shared_ptr<Context> ctx = sc.second;
 
-        if(nodeCanQueue(*node.get(), run->name) && run->configure(buildNums[run->name] + 1, node, *fsHome)) {
-            node->busyExecutors++;
+        if(ctx->canQueue(jobContexts.at(run->name))) {
+            kj::Promise<RunState> onRunFinished = run->start(buildNums[run->name] + 1, ctx, *fsHome,[this](kj::Maybe<pid_t>& pid){return srv.onChildExit(pid);});
+
+            ctx->busyExecutors++;
             // set the last known result if exists
             db->stmt("SELECT result FROM builds WHERE name = ? ORDER BY completedAt DESC LIMIT 1")
              .bind(run->name)
@@ -630,17 +626,24 @@ bool Laminar::tryStartRun(std::shared_ptr<Run> run, int queueIndex) {
                 run->lastResult = RunState(result);
             });
 
-            // Actually schedules the Run steps
-            kj::Promise<void> exec = handleRunStep(run.get()).then([=]{
-                runFinished(run.get());
+            kj::Promise<void> exec = srv.readDescriptor(run->output_fd, [this, run](const char*b, size_t n){
+                // handle log output
+                std::string s(b, n);
+                run->log += s;
+                http->notifyLog(run->name, run->build, s, false);
+            }).then([run, p = kj::mv(onRunFinished)]() mutable {
+                // wait until leader reaped
+                return kj::mv(p);
+            }).then([this, run](RunState){
+                handleRunFinished(run.get());
             });
             if(run->timeout > 0) {
                 exec = exec.attach(srv.addTimeout(run->timeout, [r=run.get()](){
-                    r->abort(true);
+                    r->abort();
                 }));
             }
             srv.addTask(kj::mv(exec));
-            LLOG(INFO, "Started job on node", run->name, run->build, node->name);
+            LLOG(INFO, "Started job", run->name, run->build, ctx->name);
 
             // update next build number
             buildNums[run->name]++;
@@ -660,11 +663,6 @@ bool Laminar::tryStartRun(std::shared_ptr<Run> run, int queueIndex) {
              .fetch<uint>([&](uint etc){
                 j.set("etc", time(nullptr) + etc);
             });
-            j.startArray("tags");
-            for(const str& t: jobTags[run->name]) {
-                j.String(t.c_str());
-            }
-            j.EndArray();
             j.EndObject();
             http->notifyEvent(j.str(), run->name.c_str());
             return true;
@@ -685,34 +683,10 @@ void Laminar::assignNewJobs() {
     }
 }
 
-kj::Promise<void> Laminar::handleRunStep(Run* run) {
-    if(run->step()) {
-        // no more steps
-        return kj::READY_NOW;
-    }
+void Laminar::handleRunFinished(Run * r) {
+    std::shared_ptr<Context> ctx = r->context;
 
-    kj::Promise<int> exited = srv.onChildExit(run->current_pid);
-    // promise is fulfilled when the process is reaped. But first we wait for all
-    // output from the pipe (Run::output_fd) to be consumed.
-    return srv.readDescriptor(run->output_fd, [this,run](const char*b,size_t n){
-        // handle log output
-        std::string s(b, n);
-        run->log += s;
-        http->notifyLog(run->name, run->build, s, false);
-    }).then([p = std::move(exited)]() mutable {
-        // wait until the process is reaped
-        return kj::mv(p);
-    }).then([this, run](int status){
-        run->reaped(status);
-        // next step in Run
-        return handleRunStep(run);
-    });
-}
-
-void Laminar::runFinished(Run * r) {
-    std::shared_ptr<Node> node = r->node;
-
-    node->busyExecutors--;
+    ctx->busyExecutors--;
     LLOG(INFO, "Run completed", r->name, to_string(r->result));
     time_t completedAt = time(nullptr);
 
@@ -731,7 +705,7 @@ void Laminar::runFinished(Run * r) {
 
     std::string reason = r->reason();
     db->stmt("INSERT INTO builds VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
-     .bind(r->name, r->build, node->name, r->queuedAt, r->startedAt, completedAt, int(r->result),
+     .bind(r->name, r->build, ctx->name, r->queuedAt, r->startedAt, completedAt, int(r->result),
            maybeZipped, logsize, r->parentName, r->parentBuild, reason)
      .exec();
 
@@ -746,11 +720,6 @@ void Laminar::runFinished(Run * r) {
             .set("started", r->startedAt)
             .set("result", to_string(r->result))
             .set("reason", r->reason());
-    j.startArray("tags");
-    for(const str& t: jobTags[r->name]) {
-        j.String(t.c_str());
-    }
-    j.EndArray();
     j.startArray("artifacts");
     populateArtifacts(j, r->name, r->build);
     j.EndArray();
@@ -834,8 +803,14 @@ R"x(
     return true;
 }
 
+// TODO: deprecate
 std::string Laminar::getCustomCss() {
     KJ_IF_MAYBE(cssFile, fsHome->tryOpenFile(kj::Path{"custom","style.css"})) {
+        static bool warningShown = false;
+        if(!warningShown) {
+            LLOG(WARNING, "Custom CSS has been deprecated and will be removed from a future release. Use a custom HTML template instead.");
+            warningShown = true;
+        }
         return (*cssFile)->readAllText().cStr();
     } else {
         return std::string();

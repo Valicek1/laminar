@@ -1,5 +1,5 @@
 ///
-/// Copyright 2015-2018 Oliver Giles
+/// Copyright 2015-2020 Oliver Giles
 ///
 /// This file is part of Laminar
 ///
@@ -23,6 +23,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #define EXIT_BAD_ARGUMENT     1
 #define EXIT_OPERATION_FAILED 2
@@ -82,7 +83,16 @@ int main(int argc, char** argv) {
         return EXIT_BAD_ARGUMENT;
     }
 
-    int ret = 0;
+    struct: public kj::TaskSet::ErrorHandler {
+        void taskFailed(kj::Exception&& e) override {
+            fprintf(stderr, "%s\n", e.getDescription().cStr());
+            ret = EXIT_OPERATION_FAILED;
+        }
+        int ret = 0;
+    } errorHandler;
+    kj::TaskSet ts(errorHandler);
+    int& ret = errorHandler.ret;
+
     const char* address = getenv("LAMINAR_HOST") ?: getenv("LAMINAR_BIND_RPC") ?: "unix-abstract:laminar";
 
     capnp::EzRpcClient client(address);
@@ -95,23 +105,20 @@ int main(int argc, char** argv) {
             fprintf(stderr, "Usage %s queue <jobName>\n", argv[0]);
             return EXIT_BAD_ARGUMENT;
         }
-        kj::Vector<capnp::RemotePromise<LaminarCi::QueueResults>> promises;
         int jobNameIndex = 2;
         // make a request for each job specified on the commandline
         do {
             auto req = laminar.queueRequest();
             req.setJobName(argv[jobNameIndex]);
             int n = setParams(argc - jobNameIndex - 1, &argv[jobNameIndex + 1], req);
-            promises.add(req.send());
+            ts.add(req.send().then([&ret,argv,jobNameIndex](capnp::Response<LaminarCi::QueueResults> resp){
+                if(resp.getResult() != LaminarCi::MethodResult::SUCCESS) {
+                    fprintf(stderr, "Failed to queue job '%s'\n", argv[jobNameIndex]);
+                    ret = EXIT_OPERATION_FAILED;
+                }
+            }));
             jobNameIndex += n + 1;
         } while(jobNameIndex < argc);
-        // pend on the promises
-        for(auto& p : promises) {
-            if(p.wait(waitScope).getResult() != LaminarCi::MethodResult::SUCCESS) {
-                fprintf(stderr, "Failed to queue job '%s'\n", argv[2]);
-                return EXIT_OPERATION_FAILED;
-            }
-        }
     } else if(strcmp(argv[1], "start") == 0 || strcmp(argv[1], "trigger") == 0) {
         if(strcmp(argv[1], "trigger") == 0)
             fprintf(stderr, "Warning: 'trigger' is deprecated, use 'queue' for the old behavior\n");
@@ -120,10 +127,6 @@ int main(int argc, char** argv) {
             return EXIT_BAD_ARGUMENT;
         }
         kj::Vector<capnp::RemotePromise<LaminarCi::StartResults>> promises;
-        struct: public kj::TaskSet::ErrorHandler {
-            void taskFailed(kj::Exception&&) override {}
-        } ignoreFailed;
-        kj::TaskSet ts(ignoreFailed);
         int jobNameIndex = 2;
         // make a request for each job specified on the commandline
         do {
@@ -134,21 +137,16 @@ int main(int argc, char** argv) {
                 if(resp.getResult() != LaminarCi::MethodResult::SUCCESS) {
                     fprintf(stderr, "Failed to start job '%s'\n", argv[2]);
                     ret = EXIT_OPERATION_FAILED;
-                }
-                printTriggerLink(argv[jobNameIndex], resp.getBuildNum());
+                } else
+                    printTriggerLink(argv[jobNameIndex], resp.getBuildNum());
             }));
             jobNameIndex += n + 1;
         } while(jobNameIndex < argc);
-        ts.onEmpty().wait(waitScope);
     } else if(strcmp(argv[1], "run") == 0) {
         if(argc < 3) {
             fprintf(stderr, "Usage %s run <jobName>\n", argv[0]);
             return EXIT_BAD_ARGUMENT;
         }
-        struct: public kj::TaskSet::ErrorHandler {
-            void taskFailed(kj::Exception&&) override {}
-        } ignoreFailed;
-        kj::TaskSet ts(ignoreFailed);
         int jobNameIndex = 2;
         // make a request for each job specified on the commandline
         do {
@@ -156,34 +154,24 @@ int main(int argc, char** argv) {
             req.setJobName(argv[jobNameIndex]);
             int n = setParams(argc - jobNameIndex - 1, &argv[jobNameIndex + 1], req);
             ts.add(req.send().then([&ret,argv,jobNameIndex](capnp::Response<LaminarCi::RunResults> resp){
-                printTriggerLink(argv[jobNameIndex], resp.getBuildNum());
-                if(resp.getResult() != LaminarCi::JobResult::SUCCESS) {
+                if(resp.getResult() == LaminarCi::JobResult::UNKNOWN)
+                    fprintf(stderr, "Failed to start job '%s'\n", argv[2]);
+		else
+		    printTriggerLink(argv[jobNameIndex], resp.getBuildNum());
+                if(resp.getResult() != LaminarCi::JobResult::SUCCESS)
                     ret = EXIT_RUN_FAILED;
-                }
             }));
             jobNameIndex += n + 1;
         } while(jobNameIndex < argc);
-        ts.onEmpty().wait(waitScope);
     } else if(strcmp(argv[1], "set") == 0) {
         if(argc < 3) {
             fprintf(stderr, "Usage %s set param=value\n", argv[0]);
             return EXIT_BAD_ARGUMENT;
         }
-        auto req = laminar.setRequest();
-        char* eq = strchr(argv[2], '=');
-        char* job = getenv("JOB");
-        char* num = getenv("RUN");
-        if(job && num && eq) {
-            char* name = argv[2];
-            *eq++ = '\0';
-            char* val = eq;
-            req.getRun().setJob(job);
-            req.getRun().setBuildNum(atoi(num));
-            req.getParam().setName(name);
-            req.getParam().setValue(val);
-            req.send().wait(waitScope);
+        if(char* pipeNum = getenv("__LAMINAR_SETENV_PIPE")) {
+            write(atoi(pipeNum), argv[2], strlen(argv[2]));
         } else {
-            fprintf(stderr, "Missing $JOB or $RUN or param is not in the format key=value\n");
+            fprintf(stderr, "Must be run from within a laminar job\n");
             return EXIT_BAD_ARGUMENT;
         }
     } else if(strcmp(argv[1], "abort") == 0) {
@@ -194,8 +182,10 @@ int main(int argc, char** argv) {
         auto req = laminar.abortRequest();
         req.getRun().setJob(argv[2]);
         req.getRun().setBuildNum(atoi(argv[3]));
-        if(req.send().wait(waitScope).getResult() != LaminarCi::MethodResult::SUCCESS)
-            ret = EXIT_OPERATION_FAILED;
+        ts.add(req.send().then([&ret](capnp::Response<LaminarCi::AbortResults> resp){
+            if(resp.getResult() != LaminarCi::MethodResult::SUCCESS)
+                ret = EXIT_OPERATION_FAILED;
+        }));
     } else if(strcmp(argv[1], "show-jobs") == 0) {
         if(argc != 2) {
             fprintf(stderr, "Usage: %s show-jobs\n", argv[0]);
@@ -224,6 +214,8 @@ int main(int argc, char** argv) {
         fprintf(stderr, "Unknown command %s\n", argv[1]);
         return EXIT_BAD_ARGUMENT;
     }
+
+    ts.onEmpty().wait(waitScope);
 
     return ret;
 }

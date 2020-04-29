@@ -268,8 +268,8 @@ Http::Http(Laminar &li) :
 
 Http::~Http()
 {
-    KJ_ASSERT(logWatchers.size() == 0);
-    KJ_ASSERT(eventPeers.size() == 0);
+    LASSERT(logWatchers.size() == 0);
+    LASSERT(eventPeers.size() == 0);
 }
 
 kj::Promise<void> Http::startServer(kj::Timer& timer, kj::Own<kj::ConnectionReceiver>&& listener)
@@ -296,4 +296,9 @@ void Http::notifyLog(std::string job, uint run, std::string log_chunk, bool eot)
             lw->fulfiller->fulfill(kj::mv(eot));
         }
     }
+}
+
+void Http::setHtmlTemplate(std::string tmpl)
+{
+    resources->setHtmlTemplate(tmpl);
 }

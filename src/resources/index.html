@@ -207,8 +207,8 @@
      <input class="form-control" id="jobFilter" v-model="search" placeholder="Filter...">
     </div>
     <ul class="nav nav-tabs">
-     <li :class="{'active':tag==null}"><a href v-on:click.prevent="tag = null">All Jobs</a></li>
-     <li v-for="t in tags" :class="{'active':t==tag}"><a href v-on:click.prevent="tag = t">{{t}}</a></li>
+     <li v-show="ungrouped.length" :class="{'active':group==null}"><a href v-on:click.prevent="group = null">Ungrouped Jobs</a></li>
+     <li v-for="g in Object.keys(groups)" :class="{'active':g==group}"><a href v-on:click.prevent="group = g">{{g}}</a></li>
     </ul>
     <table class="table table-striped" id="joblist">
      <tr   v-for="job in filteredJobs()">
@@ -228,6 +228,7 @@
    <div class="row">
     <div class="col-sm-5 col-md-6 col-lg-7">
     <h3>{{$route.params.name}}</h3>
+    <div v-html="description"></div>
     <dl class="dl-horizontal">
      <dt>Last Successful Run</dt>
      <dd><router-link v-if="lastSuccess" :to="'/jobs/'+$route.params.name+'/'+lastSuccess.number">#{{lastSuccess.number}}</router-link> {{lastSuccess?' - at '+formatDate(lastSuccess.started):'never'}}</dd>
