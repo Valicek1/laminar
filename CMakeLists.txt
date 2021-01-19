@@ -1,5 +1,5 @@
 ###
-### Copyright 2015-2019 Oliver Giles
+### Copyright 2015-2020 Oliver Giles
 ###
 ### This file is part of Laminar
 ###
@@ -22,8 +22,21 @@ cmake_policy(SET CMP0058 NEW)
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-add_definitions("-std=c++14 -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare")
+add_definitions("-std=c++17 -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Werror -DDEBUG")
+
+# Allow passing in the version string, for e.g. patched/packaged versions
+if(NOT LAMINAR_VERSION AND EXISTS ${CMAKE_SOURCE_DIR}/.git)
+    execute_process(COMMAND git describe --tags --abbrev=8 --dirty
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE LAMINAR_VERSION
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+endif()
+if(NOT LAMINAR_VERSION)
+    set(LAMINAR_VERSION xx-unversioned)
+endif()
+set_source_files_properties(src/version.cpp PROPERTIES COMPILE_DEFINITIONS
+	LAMINAR_VERSION=${LAMINAR_VERSION})
 
 # This macro takes a list of files, gzips them and converts the output into
 # object files so they can be linked directly into the application.
@@ -62,7 +75,7 @@ add_custom_command(OUTPUT laminar.capnp.c++ laminar.capnp.h
 
 # Zip and compile statically served resources
 generate_compressed_bins(${CMAKE_SOURCE_DIR}/src/resources index.html js/app.js
-    favicon.ico favicon-152.png icon.png)
+    style.css manifest.webmanifest favicon.ico favicon-152.png icon.png)
 
 # The code that allows dynamic modifying of index.html requires knowing its original size
 add_custom_command(OUTPUT index_html_size.h
@@ -70,19 +83,15 @@ add_custom_command(OUTPUT index_html_size.h
     DEPENDS src/resources/index.html)
 
 # Download 3rd-party frontend JS libs...
-file(DOWNLOAD https://cdnjs.cloudflare.com/ajax/libs/vue/2.3.4/vue.min.js
-        js/vue.min.js EXPECTED_MD5 ae2fca1cfa0e31377819b1b0ffef704c)
-file(DOWNLOAD https://cdnjs.cloudflare.com/ajax/libs/vue-router/2.7.0/vue-router.min.js
-        js/vue-router.min.js EXPECTED_MD5 5d3e35710dbe02de78c39e3e439b8d4e)
-file(DOWNLOAD https://raw.githubusercontent.com/drudru/ansi_up/v1.3.0/ansi_up.js
-        js/ansi_up.js EXPECTED_MD5 158566dc1ff8f2804de972f7e841e2f6)
+file(DOWNLOAD https://cdnjs.cloudflare.com/ajax/libs/vue/2.6.12/vue.min.js
+	js/vue.min.js EXPECTED_MD5 fb192338844efe86ec759a40152fcb8e)
+file(DOWNLOAD https://raw.githubusercontent.com/drudru/ansi_up/v4.0.4/ansi_up.js
+        js/ansi_up.js EXPECTED_MD5 b31968e1a8fed0fa82305e978161f7f5)
 file(DOWNLOAD https://cdnjs.cloudflare.com/ajax/libs/Chart.js/2.7.2/Chart.min.js
         js/Chart.min.js EXPECTED_MD5 f6c8efa65711e0cbbc99ba72997ecd0e)
-file(DOWNLOAD https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap.min.css
-        css/bootstrap.min.css EXPECTED_MD5 5d5357cb3704e1f43a1f5bfed2aebf42)
 # ...and compile them
-generate_compressed_bins(${CMAKE_BINARY_DIR} js/vue-router.min.js js/vue.min.js
-    js/ansi_up.js js/Chart.min.js css/bootstrap.min.css)
+generate_compressed_bins(${CMAKE_BINARY_DIR} js/vue.min.js
+    js/ansi_up.js js/Chart.min.js)
 # (see resources.cpp where these are fetched)
 
 set(LAMINARD_CORE_SOURCES
@@ -95,6 +104,7 @@ set(LAMINARD_CORE_SOURCES
     src/rpc.cpp
     src/run.cpp
     src/server.cpp
+    src/version.cpp
     laminar.capnp.c++
     index_html_size.h
 )
@@ -104,8 +114,21 @@ add_executable(laminard ${LAMINARD_CORE_SOURCES} src/main.cpp ${COMPRESSED_BINS}
 target_link_libraries(laminard capnp-rpc capnp kj-http kj-async kj pthread sqlite3 z)
 
 ## Client
-add_executable(laminarc src/client.cpp laminar.capnp.c++)
+add_executable(laminarc src/client.cpp src/version.cpp laminar.capnp.c++)
 target_link_libraries(laminarc capnp-rpc capnp kj-async kj pthread)
+
+## Manpages
+macro(gzip SOURCE)
+    get_filename_component(OUT_FILE ${SOURCE} NAME)
+    add_custom_command(OUTPUT ${OUT_FILE}.gz
+        COMMAND gzip < ${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE} > ${OUT_FILE}.gz
+        DEPENDS ${SOURCE})
+endmacro()
+add_custom_target(laminar-manpages ALL DEPENDS laminard.8.gz laminarc.1.gz)
+gzip(etc/laminard.8)
+gzip(etc/laminarc.1)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/laminard.8.gz DESTINATION share/man/man8)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/laminarc.1.gz DESTINATION share/man/man1)
 
 ## Tests
 set(BUILD_TESTS FALSE CACHE BOOL "Build tests")
@@ -116,12 +139,14 @@ if(BUILD_TESTS)
     target_link_libraries(laminar-tests ${GTEST_LIBRARY} capnp-rpc capnp kj-http kj-async kj pthread sqlite3 z)
 endif()
 
-set(SYSTEMD_UNITDIR lib/systemd/system CACHE PATH "Path to systemd unit files")
-set(BASH_COMPLETIONS_DIR usr/share/bash-completion/completions CACHE PATH "Path to bash completions directory")
-set(ZSH_COMPLETIONS_DIR usr/share/zsh/site-functions CACHE PATH "Path to zsh completions directory")
-install(TARGETS laminard RUNTIME DESTINATION usr/sbin)
-install(TARGETS laminarc RUNTIME DESTINATION usr/bin)
-install(FILES etc/laminar.service DESTINATION ${SYSTEMD_UNITDIR})
-install(FILES etc/laminar.conf DESTINATION etc)
+set(SYSTEMD_UNITDIR /lib/systemd/system CACHE PATH "Path to systemd unit files")
+set(BASH_COMPLETIONS_DIR /usr/share/bash-completion/completions CACHE PATH "Path to bash completions directory")
+set(ZSH_COMPLETIONS_DIR /usr/share/zsh/site-functions CACHE PATH "Path to zsh completions directory")
+install(TARGETS laminard RUNTIME DESTINATION sbin)
+install(TARGETS laminarc RUNTIME DESTINATION bin)
+install(FILES etc/laminar.conf DESTINATION /etc)
 install(FILES etc/laminarc-completion.bash DESTINATION ${BASH_COMPLETIONS_DIR} RENAME laminarc)
 install(FILES etc/laminarc-completion.zsh DESTINATION ${ZSH_COMPLETIONS_DIR} RENAME _laminarc)
+
+configure_file(etc/laminar.service.in laminar.service @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/laminar.service DESTINATION ${SYSTEMD_UNITDIR})

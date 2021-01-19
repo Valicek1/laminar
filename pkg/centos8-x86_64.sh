@@ -51,7 +51,7 @@ Lightweight Continuous Integration Service
 %prep
 
 %build
-cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/ -DSYSTEMD_UNITDIR=%{_unitdir} %{_sourcedir}/laminar-$VERSION
+cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DLAMINAR_VERSION=$VERSION -DSYSTEMD_UNITDIR=%{_unitdir} %{_sourcedir}/laminar-$VERSION
 pwd
 make
 
@@ -65,6 +65,8 @@ make
 %config(noreplace) %{_sysconfdir}/laminar.conf
 %{_datarootdir}/bash-completion/completions/laminarc
 %{_datarootdir}/zsh/site-functions/_laminarc
+%{_mandir}/man8/laminard.8.gz
+%{_mandir}/man1/laminarc.1.gz
 
 %post
 echo Creating laminar user with home in %{_sharedstatedir}/laminar

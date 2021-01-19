@@ -52,15 +52,17 @@ You can build an image that runs `laminard` by default, and contains `laminarc` 
 docker build [-t image:tag] -f docker/Dockerfile .
 ```
 
-Keep in mind that this is meant to be used as a base image to build from, so it contains only the minimum packages required to run laminar. The only shell available by default is sh and it does not even have ssh or git. You can use this image to run a basic build server, but it is recommended that you build a custom image from this base to better suit your needs.
+Keep in mind that this is meant to be used as a base image to build from, so it contains only the minimum packages required to run laminar. The only shell available by default is sh (so scripts with `#!/bin/bash` will fail to execute) and it does not have `ssh` or `git`. You can use this image to run a basic build server, but it is recommended that you build a custom image from this base to better suit your needs.
 
-The container will execute `laminard` by default. To start a laminar server with docker you can simply run the image as a daemon.
+The container will execute `laminard` by default. To start a laminar server with docker you can simply run the image as a daemon, for example:
 
 ```bash
-docker run -d --name laminar_server -p 8080:8080 [-v laminardir|laminar.conf] laminar:latest
+docker run -d --name laminar_server -p 8080:8080 -v path/to/laminardir:/var/lib/laminar --env-file path/to/laminar.conf laminar:latest
 ```
 
-You can customize laminar and persist your data by mounting your laminar directory to `/var/lib/laminar` and/or mounting a custom configuration file to `/etc/laminar.conf`.
+The [`-v` flag](https://docs.docker.com/storage/volumes/#choose-the--v-or---mount-flag) is necessary to persist job scripts and artefacts beyond the container lifetime.
+
+The [`--env-file` flag](https://docs.docker.com/engine/reference/commandline/run/#set-environment-variables--e---env---env-file) is necessary to pass configuration from `laminar.conf` to `laminard` because `laminard` does not read `/etc/laminar.conf` directly but expects variables within to be exported by `systemd` or other process supervisor.
 
 Executing `laminarc` may be done in any of the usual ways, for example:
 
@@ -127,29 +129,29 @@ chmod +x /var/lib/laminar/cfg/jobs/hello.run
 
 # Triggering a run
 
-When triggering a run, the job is first added to a queue of upcoming tasks. If the server is busy, the job may wait in this queue for a while. It will only be assigned a job number when it leaves this queue and starts executing. The job number may be useful to the client that triggers the run, so there are a few ways to trigger a run.
-
-To add the `hello` job to the queue ("fire-and-forget"), execute
+To queue execution of the `hello` job, run
 
 ```bash
 laminarc queue hello
 ```
 
-In this case, laminarc returns immediately, with its error code indicating whether adding the job to the queue was sucessful.
+In this case, `laminarc` returns immediately, with its error code indicating whether adding the job to the queue was sucessful. The run number will be printed to standard output.
 
-To queue the job and wait until it leaves the queue and starts executing, use
+If the server is busy, a run may wait in the queue for some time. To have `laminarc` instead block until the run leaves the queue and starts executing, use
 
 ```bash
 laminarc start hello
 ```
 
-In this case, laminarc blocks until the job starts executing, or returns immediately if queueing failed. The run number will be printed to standard output.
+In this case, `laminarc` blocks until the job starts executing, or returns immediately if queueing failed. The run number will be printed to standard output.
 
-To launch and run the `hello` job to completion, execute
+Finally, to launch and run the `hello` job to completion, execute
 
 ```bash
 laminarc run hello
 ```
+
+In this case, laminarc's return value indicates whether the run completed successfully.
 
 In all cases, a started run means the `/var/lib/laminar/cfg/jobs/hello.run` script will be executed, with a working directory of `/var/lib/laminar/run/hello/1` (or current run number)
 
@@ -373,6 +375,8 @@ author_email=$(git show -s --format='%ae' $rev)
 laminarc set RECIPIENTS $author_email
 ```
 
+See [notify-email-pretty.sh](https://github.com/ohwgiles/laminar/blob/master/examples/notify-email-pretty.sh) and [notify-email-text-log.sh](https://github.com/ohwgiles/laminar/blob/master/examples/notify-email-text-log.sh).
+
 ---
 
 # Helper scripts
@@ -502,13 +506,23 @@ EXECUTORS=1
 
 ## Associating a job with a context
 
-When trying to start a job, laminar will wait until the job can be matched to a context which has at least one free executor. You can define which contexts the job will associate with by setting, for example,
+When trying to start a job, laminar will wait until the job can be matched to a context which has at least one free executor. There are two ways to associate jobs and contexts. You can specify a comma-separated list of patterns `JOBS` in the context configuration file `/var/lib/laminar/cfg/contexts/CONTEXT.conf`:
+
+```
+JOBS=amd64-target-*,usage-monitor
+```
+
+This approach is often preferred when you have many jobs that need to share limited resources.
+
+Alternatively, you can set
 
 ```
 CONTEXTS=my-env-*,special_context
 ```
 
-in `/var/lib/laminar/cfg/jobs/JOB.conf`. For each of the patterns in the comma-separated list `CONTEXTS`, Laminar will iterate over the known contexts and associate the run with the first context with free executors. Patterns are [glob expressions](http://man7.org/linux/man-pages/man7/glob.7.html).
+in `/var/lib/laminar/cfg/jobs/JOB.conf`. This approach is often preferred when you have a small number of jobs that require exclusive access to an environment and you can supply alternative environments (e.g. target devices), because new contexts can be added without modifying the job configuration.
+
+In both cases, Laminar will iterate over the known contexts and associate the run with the first matching context with free executors. Patterns are [glob expressions](http://man7.org/linux/man-pages/man7/glob.7.html).
 
 If `CONTEXTS` is empty or absent (or if `JOB.conf` doesn't exist), laminar will behave as if `CONTEXTS=default` were defined.
 
@@ -521,7 +535,7 @@ DUT_IP=192.168.3.2
 FOO=bar
 ```
 
-This environment will then be available the run script of jobs associated with this context.
+This environment will then be available the run script of jobs associated with this context. Note that these definitions are not expanded by a shell, so `FOO="bar"` would result in a variable `FOO` whose contents *include* double-quotes.
 
 ---
 
@@ -679,6 +693,8 @@ Laminar will also export variables in the form `KEY=VALUE` found in these files:
 - `env`
 - `contexts/$CONTEXT.env`
 - `jobs/$JOB.env`
+
+Note that definitions in these files are not expanded by a shell, so `FOO="bar"` would result in a variable `FOO` whose contents *include* double-quotes.
 
 Finally, variables supplied on the command-line call to `laminarc queue`, `laminarc start` or `laminarc run` will be available. See [parameterized runs](#Parameterized-runs)
 

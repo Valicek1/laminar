@@ -78,13 +78,13 @@ kj::Maybe<MonitorScope> fromUrl(std::string resource, char* query) {
         return kj::mv(scope);
     }
 
-    if(resource.substr(0, 5) != "/jobs")
-        return nullptr;
-
-    if(resource.length() == 5) {
+    if(resource == "/jobs" || resource == "/wallboard") {
         scope.type = MonitorScope::ALL;
         return kj::mv(scope);
     }
+
+    if(resource.substr(0, 5) != "/jobs")
+        return nullptr;
 
     resource = resource.substr(5);
     size_t split = resource.find('/',1);
@@ -203,6 +203,8 @@ kj::Promise<void> Http::request(kj::HttpMethod method, kj::StringPtr url, const 
     if(is_sse) {
         KJ_IF_MAYBE(s, fromUrl(url.cStr(), queryString)) {
             responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "text/event-stream");
+            // Disables nginx reverse-proxy's buffering. Necessary for streamed events.
+            responseHeaders.add("X-Accel-Buffering", "no");
             auto peer = kj::heap<WithSetRef<EventPeer>>(eventPeers);
             peer->scope = *s;
             std::string st = "data: " + laminar.getStatus(peer->scope) + "\n\n";
@@ -236,12 +238,6 @@ kj::Promise<void> Http::request(kj::HttpMethod method, kj::StringPtr url, const 
                 return writeLogChunk(c, s);
             }).attach(kj::mv(output)).attach(kj::mv(stream)).attach(kj::mv(lw));
         }
-    } else if(url == "/custom/style.css") {
-        responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "text/css; charset=utf-8");
-        responseHeaders.add("Content-Transfer-Encoding", "binary");
-        std::string css = laminar.getCustomCss();
-        auto stream = response.send(200, "OK", responseHeaders, css.size());
-        return stream->write(css.data(), css.size()).attach(kj::mv(css)).attach(kj::mv(stream));
     } else if(resources->handleRequest(url.cStr(), &start, &end, &content_type)) {
         responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, content_type);
         responseHeaders.add("Content-Encoding", "gzip");

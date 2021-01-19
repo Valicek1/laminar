@@ -1,5 +1,5 @@
 ///
-/// Copyright 2015-2019 Oliver Giles
+/// Copyright 2015-2020 Oliver Giles
 ///
 /// This file is part of Laminar
 ///
@@ -31,7 +31,7 @@
 // Context name to context object map
 typedef std::unordered_map<std::string, std::shared_ptr<Context>> ContextMap;
 
-struct Server;
+class Server;
 class Json;
 
 class Http;
@@ -90,11 +90,6 @@ public:
     // if the job is unknown.
     bool handleBadgeRequest(std::string job, std::string& badge);
 
-    // Fetches the content of $LAMINAR_HOME/custom/style.css or an empty
-    // string. Ideally, this would instead be served by a proper web server
-    // which handles this url.
-    std::string getCustomCss();
-
     // Aborts a single job
     bool abort(std::string job, uint buildNum);
 
@@ -105,6 +100,7 @@ private:
     bool loadConfiguration();
     void loadCustomizations();
     void assignNewJobs();
+    bool canQueue(const Context& ctx, const Run& run) const;
     bool tryStartRun(std::shared_ptr<Run> run, int queueIndex);
     void handleRunFinished(Run*);
     // expects that Json has started an array
@@ -125,7 +121,6 @@ private:
 
     std::unordered_map<std::string, std::string> jobGroups;
 
-    Settings settings;
     RunSet activeJobs;
     Database* db;
     Server& srv;

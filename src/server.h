@@ -1,5 +1,5 @@
 ///
-/// Copyright 2015-2017 Oliver Giles
+/// Copyright 2015-2020 Oliver Giles
 ///
 /// This file is part of Laminar
 ///
@@ -24,10 +24,11 @@
 #include <capnp/message.h>
 #include <capnp/capability.h>
 #include <functional>
+#include <sys/types.h>
 
-struct Laminar;
-struct Http;
-struct Rpc;
+class Laminar;
+class Http;
+class Rpc;
 
 // This class manages the program's asynchronous event loop
 class Server final : public kj::TaskSet::ErrorHandler {
