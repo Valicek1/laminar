@@ -19,7 +19,7 @@ Throughout this document, the fixed base path `/var/lib/laminar` is used. This i
 
 Since Debian Bullseye, Laminar is available in [the official repositories](https://packages.debian.org/search?searchon=sourcenames&keywords=laminar).
 
-Alternatively, pre-built upstream packages are available for Debian 10 (Bullseye) on x86_64 and armhf, and for Rocky/CentOS/RHEL 7 and 8 on x86_64.
+Alternatively, pre-built upstream packages are available for Debian 10 (Buster) on x86_64 and armhf, and for Rocky/CentOS/RHEL 7 and 8 on x86_64.
 
 Finally, Laminar may be built from source for any Linux distribution.
 
@@ -222,13 +222,13 @@ Then, point `laminarc` to the new location using an environment variable:
 LAMINAR_HOST=192.168.1.1:9997 laminarc queue example
 ```
 
-If you need more flexibility, consider running the communication channel as a regular unix socket and applying user and group permissions to the file. To achieve this, set
+If you need more flexibility, consider running the communication channel as a regular unix socket. Setting
 
 ```
 LAMINAR_BIND_RPC=unix:/var/run/laminar.sock
 ```
 
-or similar path in `/etc/laminar.conf`.
+or similar path in `/etc/laminar.conf` will result in a socket with group read/write permissions (`660`), so any user in the `laminar` group can queue a job.
 
 This can be securely and flexibly combined with remote triggering using `ssh`. There is no need to allow the client full shell access to the server machine, the ssh server can restrict certain users to certain commands (in this case `laminarc`). See [the authorized_keys section of the sshd man page](https://man.openbsd.org/sshd#AUTHORIZED_KEYS_FILE_FORMAT) for further information.
 
@@ -713,6 +713,7 @@ Finally, variables supplied on the command-line call to `laminarc queue`, `lamin
 - `queue [JOB [PARAMS...]]...` adds one or more jobs to the queue with optional parameters, returning immediately.
 - `start [JOB [PARAMS...]]...` starts one or more jobs with optional parameters, returning when the jobs begin execution.
 - `run [JOB [PARAMS...]]...` triggers one or more jobs with optional parameters and waits for the completion of all jobs.
+- `--next` may be passed before `JOB` in order to place the job at the front of the queue instead of at the end.
 - `set [VARIABLE=VALUE]...` sets one or more variables to be exported in subsequent scripts for the run identified by the `$JOB` and `$RUN` environment variables
 - `show-jobs` shows the known jobs on the server (`$LAMINAR_HOME/cfg/jobs/*.run`).
 - `show-running` shows the currently running jobs with their numbers.
