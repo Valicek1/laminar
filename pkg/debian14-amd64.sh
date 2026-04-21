@@ -6,10 +6,10 @@ OUTPUT_DIR=$PWD
 
 SOURCE_DIR=$(readlink -f $(dirname ${BASH_SOURCE[0]})/..)
 
-VERSION=$(cd "$SOURCE_DIR" && git describe --tags --abbrev=8 --dirty)-1~upstream-debian12
+VERSION=$(cd "$SOURCE_DIR" && git describe --tags --abbrev=8 --dirty)-1~upstream-debian14
 
 DOCKER_TAG=$(docker build -q - <<EOS
-FROM debian:bookworm-slim
+FROM debian:forky-slim
 RUN apt-get update && apt-get install -y wget cmake g++ capnproto libcapnp-dev rapidjson-dev libsqlite3-dev libboost-dev zlib1g-dev pkg-config
 EOS
 )
@@ -32,7 +32,7 @@ Section:
 Priority: optional
 Architecture: amd64
 Maintainer: Oliver Giles <web ohwg net>
-Depends: libcapnp-0.9.2, libsqlite3-0, zlib1g
+Depends: libcapnp-1.1.0, libsqlite3-0, zlib1g
 Description: Lightweight Continuous Integration Service
 EOF
 echo /etc/laminar.conf > laminar/DEBIAN/conffiles
