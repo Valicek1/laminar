@@ -13,6 +13,7 @@
  <script src="js/vue.min.js"></script>
  <script src="js/ansi_up.js"></script>
  <script src="js/Chart.min.js"></script>
+ <script src="js/logview.js"></script>
  <script src="js/app.js" defer></script>
 
  <link href="style.css" rel="stylesheet">
@@ -167,6 +168,11 @@
      <div class="progress-bar" :class="{overtime:job.overtime,indeterminate:!job.etc}" :style="job.etc && {width:job.progress+'%'}"></div>
     </div>
    </div>
+   <div class="run-floating-controls">
+    <button type="button" class="console-log-autoscroll" :class="{active:autoScrollEnabled}" v-on:click="toggleAutoScroll()">
+     Auto-scroll {{autoScrollEnabled ? 'On' : 'Off'}}
+    </button>
+   </div>
    <div id="page-run-detail">
     <dl>
      <dt>Reason</dt><dd>{{job.reason}}</dd>
@@ -221,4 +227,3 @@
  </main>
 </body>
 </html>
-

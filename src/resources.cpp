@@ -42,6 +42,7 @@ Resources::Resources()
     INIT_RESOURCE("/favicon-152.png", favicon_152_png, CONTENT_TYPE_PNG);
     INIT_RESOURCE("/icon.png", icon_png, CONTENT_TYPE_PNG);
     INIT_RESOURCE("/js/app.js", js_app_js, CONTENT_TYPE_JS);
+    INIT_RESOURCE("/js/logview.js", js_logview_js, CONTENT_TYPE_JS);
     INIT_RESOURCE("/js/ansi_up.js", js_ansi_up_js, CONTENT_TYPE_JS);
     INIT_RESOURCE("/js/vue.min.js", js_vue_min_js, CONTENT_TYPE_JS);
     INIT_RESOURCE("/js/ansi_up.js", js_ansi_up_js, CONTENT_TYPE_JS);
@@ -134,4 +135,3 @@ bool Resources::handleRequest(std::string path, const char** start, const char**
 
     return false;
 }
-

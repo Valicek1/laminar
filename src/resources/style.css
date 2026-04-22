@@ -156,9 +156,29 @@ a.active:hover { text-decoration: none; }
 .ansi-bright-white-fg { color: var(--ansi-brightwhite); } .ansi-bright-white-bg { background-color: var(--ansi-brightwhite); }
 
 /* run console */
-.console-log { padding: 15px; background-color: var(--ansi-black); }
+.console-log {
+ padding: 15px;
+ background-color: var(--ansi-black);
+ min-height: 0;
+}
 .console-log code { white-space: pre-wrap; color: var(--ansi-white); }
 .console-log a { color: var(--ansi-brightwhite); text-decoration: underline dotted; }
+.run-floating-controls {
+ position: fixed;
+ top: 68px;
+ right: 15px;
+ z-index: 20;
+}
+.console-log-autoscroll {
+ color: var(--nav-fg-light);
+ border-color: rgba(255,255,255,0.2);
+ background-color: rgba(255,255,255,0.1);
+}
+.console-log-autoscroll.active {
+ color: var(--ansi-black);
+ border-color: var(--icon-enabled);
+ background-color: var(--icon-enabled);
+}
 
 /* text input (job filtering) */
 input { padding: 5px 8px; }
@@ -323,5 +343,9 @@ button:not([disabled]) { cursor: pointer; color: var(--main-fg); }
 @media (max-width: 780px) {
  #page-run-detail {
   grid-template-columns: 1fr;
+ }
+ .run-floating-controls {
+  top: 78px;
+  right: 10px;
  }
 }

@@ -663,12 +663,70 @@ const Job = templateId => {
 const Run = templateId => {
   const utf8decoder = new TextDecoder('utf-8');
   const ansi_up = new AnsiUp;
+  const autoScrollLogger = {
+    debug: function(message, details) {
+      console.debug('[Laminar][autoscroll]', message, details);
+    },
+  };
+  const autoScrollPreference = (window.LaminarLogView && window.LaminarLogView.createAutoScrollPreference)
+    ? window.LaminarLogView.createAutoScrollPreference(window.localStorage, 'laminar.autoscroll.enabled')
+    : {
+      load: function(defaultValue) {
+        return defaultValue;
+      },
+      save: function() {},
+    };
+  const localAutoScrollFactory = (element, options) => {
+    let enabled = !!(options && options.enabled);
+    const scrollTarget = (options && options.scrollTarget) || element;
+    const scrollHeightSource = (options && options.scrollHeightSource) || scrollTarget;
+    const logger = (options && options.logger) || { debug: function() {} };
+    const readScrollHeight = source => source && typeof source.scrollHeight === 'number' ? source.scrollHeight : 0;
+    const writeScrollPosition = top => {
+      if(scrollTarget && typeof scrollTarget.scrollTo === 'function')
+        scrollTarget.scrollTo(0, top);
+      else if(scrollTarget)
+        scrollTarget.scrollTop = top;
+    };
+    const log = (message, details) => logger.debug(message, Object.assign({
+      enabled: enabled,
+      targetScrollTop: scrollTarget && scrollTarget.scrollTop,
+      sourceScrollHeight: readScrollHeight(scrollHeightSource),
+    }, details));
+
+    return {
+      isEnabled: function() {
+        return enabled;
+      },
+      setEnabled: function(nextEnabled) {
+        enabled = !!nextEnabled;
+        log('Laminar log autoscroll toggle', { nextEnabled: enabled });
+        if(enabled)
+          this.scrollToBottom();
+        return enabled;
+      },
+      scrollToBottom: function() {
+        const nextTop = readScrollHeight(scrollHeightSource);
+        writeScrollPosition(nextTop);
+        log('Laminar log autoscroll scrollToBottom', { nextTop: nextTop });
+      },
+      onContentAppended: function() {
+        log('Laminar log autoscroll update');
+        if(enabled)
+          this.scrollToBottom();
+      },
+    };
+  };
+  const autoScrollFactory = (window.LaminarLogView && window.LaminarLogView.resolveAutoScrollControllerFactory)
+    ? window.LaminarLogView.resolveAutoScrollControllerFactory(window)
+    : localAutoScrollFactory;
   ansi_up.use_classes = true;
   ansi_up._escape_for_html = false;
   const state = {
     job: { artifacts: [], upstream: {} },
     latestNum: null,
     logComplete: false,
+    autoScrollEnabled: autoScrollPreference.load(false),
   };
   const logFetcher = (vm, name, num) => {
     const abort = new AbortController();
@@ -677,6 +735,7 @@ const Run = templateId => {
       //const reader = res.body.pipeThrough(new TextDecoderStream).getReader();
       const reader = res.body.getReader();
       const target = document.getElementsByTagName('code')[0];
+      const autoScroll = vm.ensureAutoScrollController();
       let logToRender = '';
       let logComplete = false;
       let tid = null;
@@ -701,6 +760,8 @@ const Run = templateId => {
           '<a href="jobs/'+$1+'/'+$2+'" onclick="return LaminarApp.navigate(this.href);">#'+$2+'</a>'
         ));
         logToRender = '';
+        if(autoScroll)
+          autoScroll.onContentAppended();
         if (logComplete) {
           // output finished
           state.logComplete = true;
@@ -735,7 +796,9 @@ const Run = templateId => {
           return pump();
         });
       }();
-    }).catch(e => {});
+    }).catch(e => {
+      console.error('[Laminar][logstream] failed', e);
+    });
     return abort;
   }
   return {
@@ -743,6 +806,37 @@ const Run = templateId => {
     data: () => state,
     props: ['route'],
     methods: {
+      ensureAutoScrollController: function() {
+        const element = document.getElementsByClassName('console-log')[0];
+        const scrollTarget = window;
+        const scrollHeightSource = document.scrollingElement || document.documentElement || document.body;
+        if(!element)
+          return null;
+        if(!this.autoScrollController || this.autoScrollController.element !== element) {
+          this.autoScrollController = autoScrollFactory(element, {
+            enabled: state.autoScrollEnabled,
+            scrollTarget: scrollTarget,
+            scrollHeightSource: scrollHeightSource,
+            logger: autoScrollLogger,
+          });
+          this.autoScrollController.element = element;
+          console.debug('[Laminar][autoscroll] controller created', {
+            scrollTargetTag: 'WINDOW',
+            enabled: state.autoScrollEnabled,
+          });
+        }
+        return this.autoScrollController;
+      },
+      toggleAutoScroll: function() {
+        state.autoScrollEnabled = !state.autoScrollEnabled;
+        autoScrollPreference.save(state.autoScrollEnabled);
+        console.debug('[Laminar][autoscroll] toggle requested', {
+          nextEnabled: state.autoScrollEnabled,
+        });
+        const controller = this.ensureAutoScrollController();
+        if(controller)
+          controller.setEnabled(state.autoScrollEnabled);
+      },
       status: function(data) {
         // Check for the /latest endpoint
         const params = this._props.route.params;
@@ -757,6 +851,14 @@ const Run = templateId => {
         state.logComplete = false;
         // DOM is used directly for performance
         document.getElementsByTagName('code')[0].innerHTML = '';
+        const autoScroll = this.ensureAutoScrollController();
+        if(autoScroll)
+          autoScroll.setEnabled(state.autoScrollEnabled);
+        console.debug('[Laminar][autoscroll] run status updated', {
+          name: params.name,
+          number: params.number,
+          autoScrollEnabled: state.autoScrollEnabled,
+        });
         if(this.logstream)
           this.logstream.abort();
         if(data.started)
