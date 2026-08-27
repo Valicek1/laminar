@@ -1,5 +1,5 @@
 ///
-/// Copyright 2015-2019 Oliver Giles
+/// Copyright 2015-2026 Oliver Giles
 ///
 /// This file is part of Laminar
 ///
@@ -16,8 +16,7 @@
 /// You should have received a copy of the GNU General Public License
 /// along with Laminar.  If not, see <http://www.gnu.org/licenses/>
 ///
-#ifndef LAMINAR_RESOURCES_H_
-#define LAMINAR_RESOURCES_H_
+#pragma once
 
 #include <unordered_map>
 #include <utility>
@@ -47,4 +46,3 @@ private:
     std::string index_html;
 };
 
-#endif // LAMINAR_RESOURCES_H_

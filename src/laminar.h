@@ -1,5 +1,5 @@
 ///
-/// Copyright 2015-2022 Oliver Giles
+/// Copyright 2015-2026 Oliver Giles
 ///
 /// This file is part of Laminar
 ///
@@ -16,14 +16,14 @@
 /// You should have received a copy of the GNU General Public License
 /// along with Laminar.  If not, see <http://www.gnu.org/licenses/>
 ///
-#ifndef LAMINAR_LAMINAR_H_
-#define LAMINAR_LAMINAR_H_
+#pragma once
 
 #include "run.h"
 #include "monitorscope.h"
 #include "context.h"
 #include "database.h"
 
+#include <list>
 #include <unordered_map>
 #include <kj/filesystem.h>
 #include <kj/async-io.h>
@@ -134,4 +134,3 @@ private:
     kj::Own<Rpc> rpc;
 };
 
-#endif // LAMINAR_LAMINAR_H_

@@ -1,5 +1,5 @@
 ///
-/// Copyright 2019 Oliver Giles
+/// Copyright 2019-2026 Oliver Giles
 ///
 /// This file is part of Laminar
 ///
@@ -16,8 +16,7 @@
 /// You should have received a copy of the GNU General Public License
 /// along with Laminar.  If not, see <http://www.gnu.org/licenses/>
 ///
-#ifndef LAMINAR_LEADER_H_
-#define LAMINAR_LEADER_H_
+#pragma once
 
 // Main function for the leader process which is responsible for
 // executing all the scripts which make up a Run. Separating this
@@ -33,4 +32,3 @@
 
 int leader_main(void);
 
-#endif // LAMINAR_LEADER_H_

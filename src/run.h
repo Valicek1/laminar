@@ -1,5 +1,5 @@
 ///
-/// Copyright 2015-2018 Oliver Giles
+/// Copyright 2015-2026 Oliver Giles
 ///
 /// This file is part of Laminar
 ///
@@ -16,14 +16,10 @@
 /// You should have received a copy of the GNU General Public License
 /// along with Laminar.  If not, see <http://www.gnu.org/licenses/>
 ///
-#ifndef LAMINAR_RUN_H_
-#define LAMINAR_RUN_H_
+#pragma once
 
 #include <string>
-#include <queue>
-#include <list>
 #include <functional>
-#include <ostream>
 #include <unordered_map>
 #include <memory>
 #include <kj/async.h>
@@ -109,6 +105,7 @@ private:
 // be executing thousands of builds at the same time
 #include <boost/multi_index_container.hpp>
 #include <boost/multi_index/hashed_index.hpp>
+#include <boost/multi_index/indexed_by.hpp>
 #include <boost/multi_index/member.hpp>
 #include <boost/multi_index/composite_key.hpp>
 #include <boost/multi_index/global_fun.hpp>
@@ -125,7 +122,7 @@ struct _run_same {
 };
 
 // A single Run can be fetched by...
-struct _run_index : bmi::indexed_by<
+typedef bmi::indexed_by<
         bmi::hashed_unique<bmi::composite_key<
             std::shared_ptr<Run>,
         // a combination of their job name and build number
@@ -138,8 +135,7 @@ struct _run_index : bmi::indexed_by<
         bmi::ordered_non_unique<bmi::member<Run, time_t, &Run::startedAt>>,
         // or by their job name
         bmi::ordered_non_unique<bmi::member<Run, std::string, &Run::name>>
-    >
-{};
+    > _run_index;
 
 struct RunSet: public boost::multi_index_container<
     std::shared_ptr<Run>,
@@ -158,4 +154,3 @@ struct RunSet: public boost::multi_index_container<
     typename bmi::nth_index<RunSet, 3>::type const& byJobName() const { return get<3>(); }
 };
 
-#endif // LAMINAR_RUN_H_

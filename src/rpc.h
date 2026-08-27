@@ -1,5 +1,5 @@
 ///
-/// Copyright 2019-2020 Oliver Giles
+/// Copyright 2019-2026 Oliver Giles
 ///
 /// This file is part of Laminar
 ///
@@ -16,8 +16,7 @@
 /// You should have received a copy of the GNU General Public License
 /// along with Laminar.  If not, see <http://www.gnu.org/licenses/>
 ///
-#ifndef LAMINAR_RPC_H_
-#define LAMINAR_RPC_H_
+#pragma once
 
 #include <capnp/ez-rpc.h>
 #include <capnp/rpc-twoparty.h>
@@ -33,4 +32,3 @@ public:
     capnp::Capability::Client rpcInterface;
 };
 
-#endif //LAMINAR_RPC_H_

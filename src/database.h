@@ -1,5 +1,5 @@
 ///
-/// Copyright 2015-2018 Oliver Giles
+/// Copyright 2015-2026 Oliver Giles
 ///
 /// This file is part of Laminar
 ///
@@ -16,8 +16,7 @@
 /// You should have received a copy of the GNU General Public License
 /// along with Laminar.  If not, see <http://www.gnu.org/licenses/>
 ///
-#ifndef LAMINAR_DATABASE_H_
-#define LAMINAR_DATABASE_H_
+#pragma once
 
 #include <string>
 #include <functional>
@@ -126,6 +125,7 @@ private:
         void bindValue(int i, uint e);
         void bindValue(int i, long e);
         void bindValue(int i, unsigned long e);
+        void bindValue(int i, long long e);
         void bindValue(int i, const char* e);
         void bindValue(int i, const std::string& e);
 
@@ -157,4 +157,3 @@ template<> long Database::Statement::fetchColumn(int col);
 template<> ulong Database::Statement::fetchColumn(int col);
 template<> double Database::Statement::fetchColumn(int col);
 
-#endif // LAMINAR_DATABASE_H_

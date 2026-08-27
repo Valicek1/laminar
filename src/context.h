@@ -1,5 +1,5 @@
 ///
-/// Copyright 2015-2020 Oliver Giles
+/// Copyright 2015-2026 Oliver Giles
 ///
 /// This file is part of Laminar
 ///
@@ -16,8 +16,7 @@
 /// You should have received a copy of the GNU General Public License
 /// along with Laminar.  If not, see <http://www.gnu.org/licenses/>
 ///
-#ifndef LAMINAR_CONTEXT_H_
-#define LAMINAR_CONTEXT_H_
+#pragma once
 
 #include <string>
 #include <set>
@@ -36,5 +35,3 @@ public:
     std::set<std::string> jobPatterns;
 };
 
-
-#endif // LAMINAR_CONTEXT_H_

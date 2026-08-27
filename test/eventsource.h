@@ -52,7 +52,7 @@ private:
     std::vector<rapidjson::Document> receivedMessages;
 
     kj::Promise<void> waitForMessages(kj::AsyncInputStream* stream, ulong offset) {
-        return stream->read(buffer.asPtr().begin() + offset, 1, BUFFER_SIZE).then([=](size_t s) {
+        return stream->read(buffer.asPtr().begin() + offset, 1, BUFFER_SIZE).then([=, this](size_t s) {
             ulong end = offset + s;
             buffer.asPtr().begin()[end] = '\0';
             if(strcmp(&buffer.asPtr().begin()[end - 2], "\n\n") == 0) {

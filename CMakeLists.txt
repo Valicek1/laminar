@@ -1,5 +1,5 @@
 ###
-### Copyright 2015-2024 Oliver Giles
+### Copyright 2015-2026 Oliver Giles
 ###
 ### This file is part of Laminar
 ###
@@ -16,7 +16,7 @@
 ### You should have received a copy of the GNU General Public License
 ### along with Laminar.  If not, see <http://www.gnu.org/licenses/>
 ###
-cmake_minimum_required(VERSION 3.6)
+cmake_minimum_required(VERSION 3.18)
 project(laminar)
 
 if (${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD")
@@ -57,7 +57,7 @@ if (LLVM_LINKER_IS_LLD)
 endif()
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Werror -DDEBUG")
@@ -157,6 +157,10 @@ include_directories(${CAPNP_INCLUDE_DIRS})
 find_package(SQLite3 REQUIRED)
 include_directories(${SQLite3_INCLUDE_DIRS})
 
+if(NOT TARGET SQLite3::SQLite3) # CMake < 4.3
+  add_library(SQLite3::SQLite3 ALIAS SQLite::SQLite3)
+endif()
+
 find_package(ZLIB REQUIRED)
 include_directories(${ZLIB_INCLUDE_DIRS})
 
@@ -165,8 +169,8 @@ include_directories(${Threads_INCLUDE_DIRS})
 
 ## Server
 add_executable(laminard ${LAMINARD_CORE_SOURCES} src/main.cpp)
-target_link_libraries(laminard CapnProto::capnp-rpc CapnProto::capnp CapnProto::kj-http CapnProto::kj-async 
-                               CapnProto::kj Threads::Threads SQLite::SQLite3 ZLIB::ZLIB
+target_link_libraries(laminard CapnProto::capnp-rpc CapnProto::capnp CapnProto::kj-http CapnProto::kj-async
+                               CapnProto::kj Threads::Threads SQLite3::SQLite3 ZLIB::ZLIB
                                compressed-bins)
 
 if (${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD")
@@ -197,7 +201,8 @@ if(BUILD_TESTS)
     find_package(GTest REQUIRED)
     include_directories(${GTEST_INCLUDE_DIRS} src)
     add_executable(laminar-tests ${LAMINARD_CORE_SOURCES} test/main.cpp test/laminar-functional.cpp test/unit-conf.cpp test/unit-database.cpp)
-    target_link_libraries(laminar-tests ${GTEST_LIBRARIES} capnp-rpc capnp kj-http kj-async kj pthread sqlite3 z compressed-bins)
+    target_link_libraries(laminar-tests ${GTEST_LIBRARIES} CapnProto::capnp-rpc CapnProto::capnp CapnProto::kj-http CapnProto::kj-async CapnProto::kj
+                                        Threads::Threads SQLite3::SQLite3 ZLIB::ZLIB compressed-bins)
 endif()
 
 set(BASH_COMPLETIONS_DIR /usr/share/bash-completion/completions CACHE PATH "Path to bash completions directory")

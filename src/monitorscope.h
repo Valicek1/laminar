@@ -1,5 +1,5 @@
 ///
-/// Copyright 2015-2019 Oliver Giles
+/// Copyright 2015-2026 Oliver Giles
 ///
 /// This file is part of Laminar
 ///
@@ -16,8 +16,7 @@
 /// You should have received a copy of the GNU General Public License
 /// along with Laminar.  If not, see <http://www.gnu.org/licenses/>
 ///
-#ifndef LAMINAR_MONITORSCOPE_H_
-#define LAMINAR_MONITORSCOPE_H_
+#pragma once
 
 #include <string>
 
@@ -58,6 +57,4 @@ struct MonitorScope {
     std::string field;
     bool order_desc;
 };
-
-#endif // LAMINAR_MONITORSCOPE_H_
 

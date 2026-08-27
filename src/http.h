@@ -1,5 +1,5 @@
 ///
-/// Copyright 2019-2020 Oliver Giles
+/// Copyright 2019-2026 Oliver Giles
 ///
 /// This file is part of Laminar
 ///
@@ -16,8 +16,7 @@
 /// You should have received a copy of the GNU General Public License
 /// along with Laminar.  If not, see <http://www.gnu.org/licenses/>
 ///
-#ifndef LAMINAR_HTTP_H_
-#define LAMINAR_HTTP_H_
+#pragma once
 
 #include <kj/memory.h>
 #include <kj/compat/http.h>
@@ -66,4 +65,3 @@ private:
     kj::HttpHeaderId ACCEPT;
 };
 
-#endif //LAMINAR_HTTP_H_

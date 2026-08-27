@@ -1,5 +1,5 @@
 ///
-/// Copyright 2015-2021 Oliver Giles
+/// Copyright 2015-2026 Oliver Giles
 ///
 /// This file is part of Laminar
 ///
@@ -26,7 +26,6 @@
 #include <kj/async-unix.h>
 #include <kj/threadlocal.h>
 
-#include <signal.h>
 #include <sys/eventfd.h>
 #include <sys/stat.h>
 #include <sys/inotify.h>
@@ -149,11 +148,10 @@ void Server::listenHttp(Http &http, kj::StringPtr httpBindAddress)
 
 kj::Promise<void> Server::acceptRpcClient(Rpc& rpc, kj::Own<kj::ConnectionReceiver>&& listener) {
     kj::ConnectionReceiver& cr = *listener.get();
-    return cr.accept().then(kj::mvCapture(kj::mv(listener),
-        [this, &rpc](kj::Own<kj::ConnectionReceiver>&& listener, kj::Own<kj::AsyncIoStream>&& connection) {
+    return cr.accept().then([this, &rpc, l = kj::mv(listener)](kj::Own<kj::AsyncIoStream>&& connection) mutable {
             addTask(rpc.accept(kj::mv(connection)));
-            return acceptRpcClient(rpc, kj::mv(listener));
-        }));
+            return acceptRpcClient(rpc, kj::mv(l));
+        });
 }
 
 // returns a promise which will read a chunk of data from the file descriptor

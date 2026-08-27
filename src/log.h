@@ -1,5 +1,5 @@
 ///
-/// Copyright 2015-2020 Oliver Giles
+/// Copyright 2015-2026 Oliver Giles
 ///
 /// This file is part of Laminar
 ///
@@ -16,8 +16,7 @@
 /// You should have received a copy of the GNU General Public License
 /// along with Laminar.  If not, see <http://www.gnu.org/licenses/>
 ///
-#ifndef LAMINAR_LOG_H_
-#define LAMINAR_LOG_H_
+#pragma once
 
 #include <kj/debug.h>
 #include <utility>
@@ -68,6 +67,4 @@ namespace _ {
       _kjSyscallResult.getErrorNumber(), #call, #__VA_ARGS__, ##__VA_ARGS__);; f.fatal())
 
 const char* laminar_version();
-
-#endif // LAMINAR_LOG_H_
 
