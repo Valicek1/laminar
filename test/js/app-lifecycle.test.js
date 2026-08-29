@@ -13,6 +13,10 @@ const chartComponentsSource = appSource.slice(
   appSource.indexOf('const Home ='),
   appSource.indexOf('// Component for the /job/:name/:number endpoint')
 );
+const runComponentSource = appSource.slice(
+  appSource.indexOf('const Run ='),
+  appSource.indexOf("Vue.component('RouterLink'")
+);
 
 function loadChartComponents(charts) {
   const context = {
@@ -39,6 +43,58 @@ function createComponentInstance(definition) {
   if(definition.created)
     definition.created.call(instance);
   return { instance: instance, nextTicks: nextTicks };
+}
+
+function loadRunComponent(overrides = {}) {
+  const codeElement = overrides.codeElement || {
+    innerHTML: '',
+    insertAdjacentHTML: () => {},
+  };
+  const context = {
+    AbortController: AbortController,
+    AnsiUp: class {
+      ansi_to_html(text) {
+        return text;
+      }
+    },
+    Date: Date,
+    TextDecoder: TextDecoder,
+    clearTimeout: overrides.clearTimeout || (() => {}),
+    console: overrides.console || { debug: () => {}, error: () => {} },
+    document: {
+      body: {},
+      documentElement: { scrollHeight: 100 },
+      getElementsByClassName: () => [],
+      getElementsByTagName: () => [codeElement],
+      scrollingElement: null,
+    },
+    fetch: overrides.fetch,
+    setTimeout: overrides.setTimeout || setTimeout,
+    window: {
+      LaminarLogView: null,
+      addEventListener: () => {},
+      innerHeight: 100,
+      localStorage: {},
+      scrollTo: () => {},
+      scrollY: 0,
+    },
+  };
+  vm.runInNewContext(
+    runComponentSource + '\n;globalThis.RunComponent = Run;',
+    context
+  );
+  return {
+    codeElement: codeElement,
+    definition: context.RunComponent('#run'),
+  };
+}
+
+function createRunInstance(definition) {
+  return {
+    $forceUpdate: () => {},
+    _props: { route: { params: { name: 'build', number: '42' } } },
+    ensureAutoScrollController: definition.methods.ensureAutoScrollController,
+  };
 }
 
 function jobStatus() {
@@ -148,4 +204,141 @@ test('destroyed job page ignores deferred chart creation', () => {
   component.nextTicks.shift()();
 
   assert.equal(createCount, 0);
+});
+
+test('leaving a run page cancels its pending log render', async () => {
+  const pendingTimers = new Map();
+  const clearedTimers = [];
+  const insertedHtml = [];
+  let nextTimer = 1;
+  let fetchSignal;
+  let readCount = 0;
+  const component = loadRunComponent({
+    codeElement: {
+      innerHTML: '',
+      insertAdjacentHTML: (position, html) => insertedHtml.push([position, html]),
+    },
+    clearTimeout: timer => {
+      clearedTimers.push(timer);
+      pendingTimers.delete(timer);
+    },
+    fetch: (url, options) => {
+      fetchSignal = options.signal;
+      return Promise.resolve({
+        body: {
+          getReader: () => ({
+            read: () => {
+              readCount++;
+              if(readCount === 1)
+                return Promise.resolve({ done: false, value: new Uint8Array([108, 111, 103]) });
+              return new Promise(() => {});
+            },
+          }),
+        },
+      });
+    },
+    setTimeout: callback => {
+      const timer = nextTimer++;
+      pendingTimers.set(timer, callback);
+      return timer;
+    },
+  });
+  const instance = createRunInstance(component.definition);
+
+  component.definition.methods.status.call(instance, { latestNum: 42, started: 1 });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(pendingTimers.size, 1);
+  assert.equal(typeof component.definition.beforeDestroy, 'function');
+  const staleRender = pendingTimers.values().next().value;
+  component.definition.beforeDestroy.call(instance);
+
+  assert.equal(fetchSignal.aborted, true);
+  assert.deepEqual(clearedTimers, [1]);
+  assert.equal(instance.logstream, null);
+  staleRender();
+  assert.deepEqual(insertedHtml, []);
+});
+
+test('leaving a run page cancels its pending final log render', async () => {
+  const pendingTimers = new Map();
+  const clearedTimers = [];
+  let nextTimer = 1;
+  const component = loadRunComponent({
+    clearTimeout: timer => {
+      clearedTimers.push(timer);
+      pendingTimers.delete(timer);
+    },
+    fetch: () => Promise.resolve({
+      body: {
+        getReader: () => ({
+          read: () => Promise.resolve({ done: true }),
+        }),
+      },
+    }),
+    setTimeout: callback => {
+      const timer = nextTimer++;
+      pendingTimers.set(timer, callback);
+      return timer;
+    },
+  });
+  const instance = createRunInstance(component.definition);
+
+  component.definition.methods.status.call(instance, { latestNum: 42, started: 1 });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(pendingTimers.size, 1);
+  component.definition.beforeDestroy.call(instance);
+
+  assert.deepEqual(clearedTimers, [1]);
+  assert.equal(pendingTimers.size, 0);
+});
+
+test('leaving a run page does not report its expected fetch abort', async () => {
+  const errors = [];
+  const component = loadRunComponent({
+    console: {
+      debug: () => {},
+      error: (...args) => errors.push(args),
+    },
+    fetch: (url, options) => new Promise((resolve, reject) => {
+      options.signal.addEventListener('abort', () => {
+        const error = new Error('The operation was aborted');
+        error.name = 'AbortError';
+        reject(error);
+      });
+    }),
+  });
+  const instance = createRunInstance(component.definition);
+
+  component.definition.methods.status.call(instance, { latestNum: 42, started: 1 });
+  component.definition.beforeDestroy.call(instance);
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.deepEqual(errors, []);
+});
+
+test('an unsolicited log fetch abort is still reported', async () => {
+  const errors = [];
+  const error = new Error('The response body was aborted');
+  error.name = 'AbortError';
+  const component = loadRunComponent({
+    console: {
+      debug: () => {},
+      error: (...args) => errors.push(args),
+    },
+    fetch: () => Promise.reject(error),
+  });
+  const instance = createRunInstance(component.definition);
+
+  component.definition.methods.status.call(instance, { latestNum: 42, started: 1 });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0][0], '[Laminar][logstream] failed');
+  assert.equal(errors[0][1], error);
 });

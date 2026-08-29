@@ -763,8 +763,24 @@ const Run = templateId => {
       document.documentElement.scrollHeight - 1;
   });
   const logFetcher = (vm, name, num) => {
-    const abort = new AbortController();
-    fetch('log/'+name+'/'+num, {signal:abort.signal}).then(res => {
+    const abortController = new AbortController();
+    let active = true;
+    let tid = null;
+    const stream = {
+      abort: function() {
+        if(!active)
+          return;
+        active = false;
+        abortController.abort();
+        if(tid !== null) {
+          clearTimeout(tid);
+          tid = null;
+        }
+      },
+    };
+    fetch('log/'+name+'/'+num, {signal:abortController.signal}).then(res => {
+      if(!active)
+        return;
       // ATOW pipeThrough not supported in Firefox
       //const reader = res.body.pipeThrough(new TextDecoderStream).getReader();
       const reader = res.body.getReader();
@@ -772,10 +788,13 @@ const Run = templateId => {
       const autoScroll = vm.ensureAutoScrollController();
       let logToRender = '';
       let logComplete = false;
-      let tid = null;
       let lastUiUpdate = 0;
 
       function updateUI() {
+        if(!active) {
+          tid = null;
+          return;
+        }
         // output may contain private ANSI CSI escape sequence to point to
         // downstream jobs. ansi_up (correctly) discards unknown sequences,
         // so they must be matched before passing through ansi_up. ansi_up
@@ -810,6 +829,8 @@ const Run = templateId => {
 
       return function pump() {
         return reader.read().then(({done, value}) => {
+          if(!active)
+            return;
           if (done) {
             // do not set state.logComplete directly, because rendering
             // may take some time, and we don't want the progress indicator
@@ -821,7 +842,7 @@ const Run = templateId => {
             // that for the common case of short logs, the loading spinner
             // disappears immediately as the log is rendered
             if(tid === null)
-              setTimeout(updateUI, 0);
+              tid = setTimeout(updateUI, 0);
             return;
           }
           // sometimes logs can be very large, and we are calling pump()
@@ -834,14 +855,22 @@ const Run = templateId => {
         });
       }();
     }).catch(e => {
-      console.error('[Laminar][logstream] failed', e);
+      const expectedAbort = abortController.signal.aborted && e && e.name === 'AbortError';
+      if(!expectedAbort)
+        console.error('[Laminar][logstream] failed', e);
     });
-    return abort;
+    return stream;
   }
   return {
     template: templateId,
     data: () => state,
     props: ['route'],
+    beforeDestroy: function() {
+      if(this.logstream) {
+        this.logstream.abort();
+        this.logstream = null;
+      }
+    },
     methods: {
       ensureAutoScrollController: function() {
         const element = document.getElementsByClassName('console-log')[0];
