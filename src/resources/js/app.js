@@ -454,7 +454,7 @@ const Home = templateId => {
           const job = state.jobsRunning[i];
           if (job.name == data.name && job.number == data.number) {
             state.jobsRunning.splice(i, 1);
-            state.jobsRecent.splice(0, 0, data);
+            window.LaminarAppState.prependRecentRun(state.jobsRecent, data);
             this.$forceUpdate();
             break;
           }
@@ -630,7 +630,7 @@ const Job = templateId => {
         const i = state.jobsRunning.findIndex(j => j.number === data.number);
         if (i > -1) {
             state.jobsRunning.splice(i, 1);
-            state.jobsRecent.splice(0, 0, data);
+            window.LaminarAppState.prependRecentRun(state.jobsRecent, data);
             this.$forceUpdate();
         }
         chtBuildTime.jobCompleted(data.number, data.result, data.completed - data.started);

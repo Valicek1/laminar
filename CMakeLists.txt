@@ -112,7 +112,7 @@ add_custom_command(OUTPUT laminar.capnp.c++ laminar.capnp.h
 
 # Zip and compile statically served resources
 generate_compressed_bins(${CMAKE_SOURCE_DIR}/src/resources index.html js/app.js
-    js/logview.js
+    js/app-state.js js/logview.js
     style.css manifest.webmanifest favicon.ico favicon-152.png icon.png)
 
 # The code that allows dynamic modifying of index.html requires knowing its original size
