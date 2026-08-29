@@ -950,56 +950,50 @@ Vue.component('RouterView', (() => {
     }
   }
 
-  let eventSource = null;
+  const eventSourceController = window.LaminarAppState.createEventSourceController({
+    createEventSource: url => new EventSource(url),
+    setTimeout: (callback, delay) => setTimeout(callback, delay),
+    clearTimeout: timer => clearTimeout(timer),
+  });
 
   const setupEventSource = (view, query) => {
-    // drop any existing event source
-    if(eventSource)
-      eventSource.close();
-
     const path = (location.origin+location.pathname).substr(document.head.baseURI.length);
-    const search = query ? '?' + Object.entries(query).map(([k,v])=>`${k}=${v}`).join('&') : '';
+    const search = query ? '?' + new URLSearchParams(query).toString() : '';
 
-    eventSource = new EventSource(document.head.baseURI + path + search);
-    eventSource.reconnectInterval = 500;
-    eventSource.onmessage = msg => {
-      msg = JSON.parse(msg.data);
-      if(msg.type === 'status') {
-        // Event source is connected. Update static data
-        document.title = view.$root.title = msg.title;
-        view.$root.version = msg.version;
-        // Calculate clock offset (used by ProgressUpdater)
-        view.$root.clockSkew = msg.time - Math.floor((new Date()).getTime()/1000);
-        view.$root.connected = true;
-        [view.currentView, route.params] = resolveRoute(path);
-        // the component won't be instantiated until nextTick
-        view.$nextTick(() => {
-          // component is ready, update it with the data from the eventsource
-          eventSource.comp = view.$children[0];
-          // and finally run the component handler
-          eventSource.comp[msg.type](msg.data);
-        });
-      } else {
-        // at this point, the component must be defined
-        if (!eventSource.comp)
-          return console.error("Page component was undefined");
-        view.$root.connected = true;
-        view.$root.showNotify(msg.type, msg.data);
-        if(typeof eventSource.comp[msg.type] === 'function')
-          eventSource.comp[msg.type](msg.data);
-      }
-    }
-    eventSource.onerror = err => {
-      let ri = eventSource.reconnectInterval;
-      view.$root.connected = false;
-      setTimeout(() => {
-        setupEventSource(view);
-        if(ri < 7500)
-          ri *= 1.5;
-        eventSource.reconnectInterval = ri
-      }, ri);
-      eventSource.close();
-    }
+    eventSourceController.connect(document.head.baseURI + path + search, {
+      onMessage: (message, connection) => {
+        const msg = JSON.parse(message.data);
+        if(msg.type === 'status') {
+          // Event source is connected. Update static data
+          document.title = view.$root.title = msg.title;
+          view.$root.version = msg.version;
+          // Calculate clock offset (used by ProgressUpdater)
+          view.$root.clockSkew = msg.time - Math.floor((new Date()).getTime()/1000);
+          view.$root.connected = true;
+          [view.currentView, route.params] = resolveRoute(path);
+          // the component won't be instantiated until nextTick
+          view.$nextTick(() => {
+            if(!eventSourceController.isCurrent(connection))
+              return;
+            // component is ready, update it with the data from the eventsource
+            connection.comp = view.$children[0];
+            // and finally run the component handler
+            connection.comp[msg.type](msg.data);
+          });
+        } else {
+          // at this point, the component must be defined
+          if(!connection.comp)
+            return console.error("Page component was undefined");
+          view.$root.connected = true;
+          view.$root.showNotify(msg.type, msg.data);
+          if(typeof connection.comp[msg.type] === 'function')
+            connection.comp[msg.type](msg.data);
+        }
+      },
+      onError: () => {
+        view.$root.connected = false;
+      },
+    });
   };
 
   let route = {};
