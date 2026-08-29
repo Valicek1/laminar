@@ -22,9 +22,11 @@ const runComponentSource = appSource.slice(
   appSource.indexOf("Vue.component('RouterLink'")
 );
 
-function loadChartComponents(charts) {
+function loadChartComponents(charts, overrides = {}) {
   const context = {
     Charts: charts,
+    clearInterval: overrides.clearInterval || (() => {}),
+    setInterval: overrides.setInterval || (() => 1),
     window: {
       LaminarAppState: {
         createChartLifecycle: createChartLifecycle,
@@ -38,11 +40,12 @@ function loadChartComponents(charts) {
   return context;
 }
 
-function createComponentInstance(definition) {
+function createComponentInstance(definition, overrides = {}) {
   const nextTicks = [];
   const instance = {
     $forceUpdate: () => {},
     $nextTick: callback => nextTicks.push(callback),
+    $root: overrides.root || { $emit: () => {} },
   };
   if(definition.created)
     definition.created.call(instance);
@@ -193,6 +196,62 @@ test('destroyed home page ignores deferred chart creation', () => {
   component.nextTicks.shift()();
 
   assert.deepEqual(createdCharts, []);
+});
+
+test('home requests a fresh status snapshot every 15 minutes', () => {
+  const emittedEvents = [];
+  let refreshCallback;
+  let refreshDelay;
+  const context = loadChartComponents({}, {
+    setInterval: (callback, delay) => {
+      refreshCallback = callback;
+      refreshDelay = delay;
+      return 1385;
+    },
+  });
+  const definition = context.HomeComponent('#home');
+
+  createComponentInstance(definition, {
+    root: { $emit: event => emittedEvents.push(event) },
+  });
+
+  assert.equal(refreshDelay, 900000);
+  refreshCallback();
+  assert.deepEqual(emittedEvents, ['navigate']);
+});
+
+test('leaving home cancels its status refresh interval', () => {
+  const clearedIntervals = [];
+  const context = loadChartComponents({}, {
+    setInterval: () => 1385,
+    clearInterval: timer => clearedIntervals.push(timer),
+  });
+  const definition = context.HomeComponent('#home');
+  const component = createComponentInstance(definition);
+
+  definition.beforeDestroy.call(component.instance);
+
+  assert.deepEqual(clearedIntervals, [1385]);
+});
+
+test('a queued home status refresh is inert after leaving home', () => {
+  const emittedEvents = [];
+  let refreshCallback;
+  const context = loadChartComponents({}, {
+    setInterval: callback => {
+      refreshCallback = callback;
+      return 1385;
+    },
+  });
+  const definition = context.HomeComponent('#home');
+  const component = createComponentInstance(definition, {
+    root: { $emit: event => emittedEvents.push(event) },
+  });
+
+  definition.beforeDestroy.call(component.instance);
+  refreshCallback();
+
+  assert.deepEqual(emittedEvents, []);
 });
 
 test('destroyed job page ignores deferred chart creation', () => {

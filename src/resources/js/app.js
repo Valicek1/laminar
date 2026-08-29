@@ -424,8 +424,15 @@ const Home = templateId => {
     data: () => state,
     created: function() {
       this.chartLifecycle = window.LaminarAppState.createChartLifecycle();
+      this.statusRefreshTimer = setInterval(() => {
+        if(this.statusRefreshTimer === null)
+          return;
+        this.$root.$emit('navigate');
+      }, 15 * 60 * 1000);
     },
     beforeDestroy: function() {
+      clearInterval(this.statusRefreshTimer);
+      this.statusRefreshTimer = null;
       this.chartLifecycle.destroy();
       this.chartLifecycle = null;
     },
