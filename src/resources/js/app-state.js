@@ -1,5 +1,5 @@
 (function(global) {
-  const RECENT_RUN_LIMIT = 30;
+  const RECENT_RUN_LIMIT = 20;
 
   function prependRecentRun(recentRuns, run) {
     recentRuns.unshift(run);

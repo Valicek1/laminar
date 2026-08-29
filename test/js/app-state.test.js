@@ -5,7 +5,7 @@ const {
   prependRecentRun,
 } = require('../../src/resources/js/app-state.js');
 
-test('recent runs retain only the 30 newest completions', () => {
+test('recent runs retain only the 20 newest completions', () => {
   const recentRuns = [];
 
   for(let number = 1; number <= 300; ++number)
@@ -16,7 +16,6 @@ test('recent runs retain only the 30 newest completions', () => {
     [
       300, 299, 298, 297, 296, 295, 294, 293, 292, 291,
       290, 289, 288, 287, 286, 285, 284, 283, 282, 281,
-      280, 279, 278, 277, 276, 275, 274, 273, 272, 271,
     ]
   );
 });
