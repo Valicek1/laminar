@@ -413,11 +413,14 @@ const Home = templateId => {
     resultChanged: [],
     lowPassRates: [],
   };
-  let chtUtilization, chtBuildsPerDay, chtBuildsPerJob, chtTimePerJob;
+  const chartLifecycle = window.LaminarAppState.createChartLifecycle();
   let completedCounts;
   return {
     template: templateId,
     data: () => state,
+    beforeDestroy: function() {
+      chartLifecycle.destroy();
+    },
     methods: {
       status: function(msg) {
         state.jobsQueued = msg.queued.reverse();
@@ -430,11 +433,13 @@ const Home = templateId => {
 
         // defer charts to nextTick because they get DOM elements which aren't rendered yet
         this.$nextTick(() => {
-          chtUtilization = Charts.createExecutorUtilizationChart("chartUtil", msg.executorsBusy, msg.executorsTotal);
-          chtBuildsPerDay = Charts.createRunsPerDayChart("chartBpd", msg.buildsPerDay);
-          chtBuildsPerJob = Charts.createRunsPerJobChart("chartBpj", msg.buildsPerJob);
-          chtTimePerJob = Charts.createTimePerJobChart("chartTpj", msg.timePerJob, completedCounts);
-          chtBuildTimeChanges = Charts.createRunTimeChangesChart("chartBuildTimeChanges", msg.buildTimeChanges);
+          chartLifecycle.replace(own => {
+            own('utilization', Charts.createExecutorUtilizationChart("chartUtil", msg.executorsBusy, msg.executorsTotal));
+            own('buildsPerDay', Charts.createRunsPerDayChart("chartBpd", msg.buildsPerDay));
+            own('buildsPerJob', Charts.createRunsPerJobChart("chartBpj", msg.buildsPerJob));
+            own('timePerJob', Charts.createTimePerJobChart("chartTpj", msg.timePerJob, completedCounts));
+            own('buildTimeChanges', Charts.createRunTimeChangesChart("chartBuildTimeChanges", msg.buildTimeChanges));
+          });
         });
       },
       job_queued: function(data) {
@@ -445,7 +450,7 @@ const Home = templateId => {
         state.jobsQueued.splice(state.jobsQueued.length - data.queueIndex - 1, 1);
         state.jobsRunning.splice(0, 0, data);
         this.$forceUpdate();
-        chtUtilization.executorBusyChanged(true);
+        chartLifecycle.get('utilization').executorBusyChanged(true);
       },
       job_completed: function(data) {
         if(!(job.name in completedCounts))
@@ -476,11 +481,11 @@ const Home = templateId => {
           }
         }
         completedCounts[job.name]++;
-        chtBuildsPerDay.jobCompleted(data.result === 'success')
-        chtUtilization.executorBusyChanged(false);
-        chtBuildsPerJob.jobCompleted(data.name);
-        chtTimePerJob.jobCompleted(data.name, data.completed - data.started);
-        chtBuildTimeChanges.jobCompleted(data.name, data.completed - data.started);
+        chartLifecycle.get('buildsPerDay').jobCompleted(data.result === 'success')
+        chartLifecycle.get('utilization').executorBusyChanged(false);
+        chartLifecycle.get('buildsPerJob').jobCompleted(data.name);
+        chartLifecycle.get('timePerJob').jobCompleted(data.name, data.completed - data.started);
+        chartLifecycle.get('buildTimeChanges').jobCompleted(data.name, data.completed - data.started);
       }
     }
   };
