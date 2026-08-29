@@ -416,13 +416,16 @@ const Home = templateId => {
     resultChanged: [],
     lowPassRates: [],
   };
-  const chartLifecycle = window.LaminarAppState.createChartLifecycle();
   let completedCounts;
   return {
     template: templateId,
     data: () => state,
+    created: function() {
+      this.chartLifecycle = window.LaminarAppState.createChartLifecycle();
+    },
     beforeDestroy: function() {
-      chartLifecycle.destroy();
+      this.chartLifecycle.destroy();
+      this.chartLifecycle = null;
     },
     methods: {
       status: function(msg) {
@@ -436,7 +439,9 @@ const Home = templateId => {
 
         // defer charts to nextTick because they get DOM elements which aren't rendered yet
         this.$nextTick(() => {
-          chartLifecycle.replace(own => {
+          if(!this.chartLifecycle)
+            return;
+          this.chartLifecycle.replace(own => {
             own('utilization', Charts.createExecutorUtilizationChart("chartUtil", msg.executorsBusy, msg.executorsTotal));
             own('buildsPerDay', Charts.createRunsPerDayChart("chartBpd", msg.buildsPerDay));
             own('buildsPerJob', Charts.createRunsPerJobChart("chartBpj", msg.buildsPerJob));
@@ -453,7 +458,7 @@ const Home = templateId => {
         state.jobsQueued.splice(state.jobsQueued.length - data.queueIndex - 1, 1);
         state.jobsRunning.splice(0, 0, data);
         this.$forceUpdate();
-        chartLifecycle.get('utilization').executorBusyChanged(true);
+        this.chartLifecycle.get('utilization').executorBusyChanged(true);
       },
       job_completed: function(data) {
         window.LaminarAppState.recordJobCompletion(
@@ -479,11 +484,11 @@ const Home = templateId => {
             break;
           }
         }
-        chartLifecycle.get('buildsPerDay').jobCompleted(data.result === 'success')
-        chartLifecycle.get('utilization').executorBusyChanged(false);
-        chartLifecycle.get('buildsPerJob').jobCompleted(data.name);
-        chartLifecycle.get('timePerJob').jobCompleted(data.name, data.completed - data.started);
-        chartLifecycle.get('buildTimeChanges').jobCompleted(data.name, data.completed - data.started);
+        this.chartLifecycle.get('buildsPerDay').jobCompleted(data.result === 'success')
+        this.chartLifecycle.get('utilization').executorBusyChanged(false);
+        this.chartLifecycle.get('buildsPerJob').jobCompleted(data.name);
+        this.chartLifecycle.get('timePerJob').jobCompleted(data.name, data.completed - data.started);
+        this.chartLifecycle.get('buildTimeChanges').jobCompleted(data.name, data.completed - data.started);
       }
     }
   };
@@ -594,11 +599,17 @@ const Job = templateId => {
     pages: 0,
     sort: {}
   };
-  let chtBuildTime = null;
   return {
     template: templateId,
     props: ['route'],
     data: () => state,
+    created: function() {
+      this.chartLifecycle = window.LaminarAppState.createChartLifecycle();
+    },
+    beforeDestroy: function() {
+      this.chartLifecycle.destroy();
+      this.chartLifecycle = null;
+    },
     methods: {
       status: function(msg) {
         state.description = msg.description;
@@ -612,12 +623,15 @@ const Job = templateId => {
 
         // "status" comes again if we change page/sorting. Delete the
         // old chart and recreate it to prevent flickering of old data
-        if(chtBuildTime)
-          chtBuildTime.destroy();
+        this.chartLifecycle.destroy();
 
         // defer chart to nextTick because they get DOM elements which aren't rendered yet
         this.$nextTick(() => {
-          chtBuildTime = Charts.createRunTimeChart("chartBt", msg.recent, msg.averageRuntime);
+          if(!this.chartLifecycle)
+            return;
+          this.chartLifecycle.replace(own => {
+            own('buildTime', Charts.createRunTimeChart("chartBt", msg.recent, msg.averageRuntime));
+          });
         });
       },
       job_queued: function(data) {
@@ -636,7 +650,7 @@ const Job = templateId => {
             window.LaminarAppState.prependRecentRun(state.jobsRecent, data);
             this.$forceUpdate();
         }
-        chtBuildTime.jobCompleted(data.number, data.result, data.completed - data.started);
+        this.chartLifecycle.get('buildTime').jobCompleted(data.number, data.result, data.completed - data.started);
       },
       page_next: function() {
         state.sort.page++;
