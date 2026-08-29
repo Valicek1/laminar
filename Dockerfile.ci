@@ -1,0 +1,40 @@
+# syntax=docker/dockerfile:1
+
+ARG BASE_IMAGE=debian:trixie
+FROM ${BASE_IMAGE} AS test
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      binutils \
+      ca-certificates \
+      capnproto \
+      cmake \
+      g++ \
+      git \
+      gzip \
+      libboost-dev \
+      libcapnp-dev \
+      libgtest-dev \
+      libsqlite3-dev \
+      make \
+      nodejs \
+      pkg-config \
+      rapidjson-dev \
+      zlib1g-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . .
+
+RUN cmake \
+      -S . \
+      -B /build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DBUILD_TESTS=TRUE
+RUN cmake --build /build --parallel "$(nproc)"
+
+RUN bash test/ci/laminar-entrypoint.test.sh
+RUN /build/laminar-tests
+RUN node --test test/js/*.test.js

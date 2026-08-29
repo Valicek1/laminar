@@ -32,6 +32,22 @@ sudo make install
 
 `make install` includes a systemd unit file. If you intend to use it, consider creating a new user `laminar` or modifying the user specified in the unit file.
 
+## Running tests in Docker
+
+The repository includes a self-contained Docker test build that runs the C++
+and JavaScript test suites:
+
+```bash
+docker build --file Dockerfile.ci --target test .
+```
+
+The `.laminar` job entry point runs the same command. A compatible custom
+Debian base image can be selected for either local or CI execution:
+
+```bash
+LAMINAR_CI_BASE_IMAGE=registry.sw3.cz/valicek1/lxcbian-trixie ./.laminar
+```
+
 ## Packaging for distributions
 
 The `pkg` directory contains shell scripts which use docker to build native packages (deb,rpm) for common Linux distributions. Note that these are very simple packages which may not completely conform to the distribution's packaging guidelines, however they may serve as a starting point for creating an official package, or may be useful if the official package lags.
