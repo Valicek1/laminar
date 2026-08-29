@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+readonly base_image=${LAMINAR_CI_BASE_IMAGE:-debian:trixie}
+
+cd "$repo_root"
+exec docker build \
+  --build-arg "BASE_IMAGE=$base_image" \
+  --file Dockerfile.ci \
+  --target test \
+  .
