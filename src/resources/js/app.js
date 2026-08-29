@@ -32,7 +32,7 @@ Vue.mixin({
       }
     }
   },
-  beforeDestroy: () => {
+  beforeDestroy: function() {
     clearInterval(this.updateTimer);
   },
   watch: {
