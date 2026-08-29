@@ -1,9 +1,42 @@
 (function(global) {
   const RECENT_RUN_LIMIT = 20;
 
+  function addSampleToMean(mean, sampleCount, sample) {
+    return ((sampleCount - 1) * mean + sample) / sampleCount;
+  }
+
+  function incrementCount(counts, name) {
+    const count = Object.prototype.hasOwnProperty.call(counts, name)
+      ? counts[name] + 1
+      : 1;
+    Object.defineProperty(counts, name, {
+      configurable: true,
+      enumerable: true,
+      value: count,
+      writable: true,
+    });
+    return count;
+  }
+
+  function recordSampleToMean(mean, sampleCounts, name, sample) {
+    return addSampleToMean(mean, incrementCount(sampleCounts, name), sample);
+  }
+
   function prependRecentRun(recentRuns, run) {
     recentRuns.unshift(run);
     recentRuns.splice(RECENT_RUN_LIMIT);
+  }
+
+  function recordJobCompletion(completedCounts, lowPassRates, completion) {
+    const completedCount = incrementCount(completedCounts, completion.name);
+    const lowPassRate = lowPassRates.find(job => job.name === completion.name);
+    if(lowPassRate) {
+      lowPassRate.passRate = (
+        (completedCount - 1) * lowPassRate.passRate +
+        (completion.result === 'success' ? 1 : 0)
+      ) / completedCount;
+    }
+    return completedCount;
   }
 
   function createChartLifecycle() {
@@ -102,7 +135,10 @@
   const api = {
     createChartLifecycle: createChartLifecycle,
     createEventSourceController: createEventSourceController,
+    incrementCount: incrementCount,
     prependRecentRun: prependRecentRun,
+    recordJobCompletion: recordJobCompletion,
+    recordSampleToMean: recordSampleToMean,
   };
 
   global.LaminarAppState = api;

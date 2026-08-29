@@ -229,7 +229,7 @@ const Charts = (() => {
       }
       return c;
     },
-    createTimePerJobChart: (id, data, completedCounts) => {
+    createTimePerJobChart: (id, data, sampleCounts) => {
       const scale = timeScale(Math.max(...Object.values(data)));
       const c = new Chart(document.getElementById(id), {
         type: 'bar',
@@ -262,16 +262,19 @@ const Charts = (() => {
         }
       });
       c.jobCompleted = (name, time) => {
-        for (var j = 0; j < c.data.datasets[0].data.length; ++j) {
-          if (c.data.labels[j] == name) {
-            c.data.datasets[0].data[j] = ((completedCounts[name]-1) * c.data.datasets[0].data[j] + time * scale.factor) / completedCounts[name];
-            c.update();
-            return;
-          }
+        const jobIndex = c.data.labels.indexOf(name);
+        const mean = window.LaminarAppState.recordSampleToMean(
+          jobIndex === -1 ? 0 : c.data.datasets[0].data[jobIndex],
+          sampleCounts,
+          name,
+          time * scale.factor
+        );
+        if(jobIndex === -1) {
+          c.data.labels.push(name);
+          c.data.datasets[0].data.push(mean);
+        } else {
+          c.data.datasets[0].data[jobIndex] = mean;
         }
-        // if we get here, it's a new/unknown job
-        c.data.labels.push(name);
-        c.data.datasets[0].data.push(time * scale.factor);
         c.update();
       };
       return c;
@@ -437,7 +440,7 @@ const Home = templateId => {
             own('utilization', Charts.createExecutorUtilizationChart("chartUtil", msg.executorsBusy, msg.executorsTotal));
             own('buildsPerDay', Charts.createRunsPerDayChart("chartBpd", msg.buildsPerDay));
             own('buildsPerJob', Charts.createRunsPerJobChart("chartBpj", msg.buildsPerJob));
-            own('timePerJob', Charts.createTimePerJobChart("chartTpj", msg.timePerJob, completedCounts));
+            own('timePerJob', Charts.createTimePerJobChart("chartTpj", msg.timePerJob, msg.timePerJobCounts));
             own('buildTimeChanges', Charts.createRunTimeChangesChart("chartBuildTimeChanges", msg.buildTimeChanges));
           });
         });
@@ -453,8 +456,12 @@ const Home = templateId => {
         chartLifecycle.get('utilization').executorBusyChanged(true);
       },
       job_completed: function(data) {
-        if(!(job.name in completedCounts))
-          completedCounts[job.name] = 0;
+        window.LaminarAppState.recordJobCompletion(
+          completedCounts,
+          state.lowPassRates,
+          data
+        );
+        this.$forceUpdate();
         for(let i = 0; i < state.jobsRunning.length; ++i) {
           const job = state.jobsRunning[i];
           if (job.name == data.name && job.number == data.number) {
@@ -472,15 +479,6 @@ const Home = templateId => {
             break;
           }
         }
-        for(let i = 0; i < state.lowPassRates.length; ++i) {
-          const job = state.lowPassRates[i];
-          if(job.name == data.name) {
-            job.passRate = ((completedCounts[job.name] - 1) * job.passRate + (data.result === 'success' ? 1 : 0)) / completedCounts[job.name];
-            this.$forceUpdate();
-            break;
-          }
-        }
-        completedCounts[job.name]++;
         chartLifecycle.get('buildsPerDay').jobCompleted(data.result === 'success')
         chartLifecycle.get('utilization').executorBusyChanged(false);
         chartLifecycle.get('buildsPerJob').jobCompleted(data.name);

@@ -3,8 +3,68 @@ const assert = require('node:assert/strict');
 
 const {
   createChartLifecycle,
+  incrementCount,
   prependRecentRun,
+  recordJobCompletion,
+  recordSampleToMean,
 } = require('../../src/resources/js/app-state.js');
+
+test('runtime mean retains both samples for a job missing from the snapshot', () => {
+  const sampleCounts = {};
+
+  const firstMean = recordSampleToMean(0, sampleCounts, 'new-job', 100);
+  const secondMean = recordSampleToMean(firstMean, sampleCounts, 'new-job', 60);
+
+  assert.equal(firstMean, 100);
+  assert.equal(secondMean, 80);
+  assert.deepEqual(sampleCounts, { 'new-job': 2 });
+});
+
+test('count initialization treats job names as data, not object properties', () => {
+  for(const name of ['constructor', 'toString', '__proto__']) {
+    const counts = {};
+
+    assert.equal(incrementCount(counts, name), 1);
+    assert.equal(Object.prototype.hasOwnProperty.call(counts, name), true);
+    assert.equal(counts[name], 1);
+  }
+});
+
+test('job completion increments its count before recalculating pass rate', () => {
+  const completedCounts = { build: 4, deploy: 10 };
+  const lowPassRates = [
+    { name: 'build', passRate: 0.75 },
+    { name: 'deploy', passRate: 0.4 },
+  ];
+
+  const completedCount = recordJobCompletion(
+    completedCounts,
+    lowPassRates,
+    { name: 'build', result: 'failed' }
+  );
+
+  assert.equal(completedCount, 5);
+  assert.deepEqual(completedCounts, { build: 5, deploy: 10 });
+  assert.deepEqual(lowPassRates, [
+    { name: 'build', passRate: 0.6 },
+    { name: 'deploy', passRate: 0.4 },
+  ]);
+});
+
+test('completion for an unlisted job updates its count without inventing a rank', () => {
+  const completedCounts = {};
+  const lowPassRates = [];
+
+  const completedCount = recordJobCompletion(
+    completedCounts,
+    lowPassRates,
+    { name: 'new-job', result: 'success' }
+  );
+
+  assert.equal(completedCount, 1);
+  assert.deepEqual(completedCounts, { 'new-job': 1 });
+  assert.deepEqual(lowPassRates, []);
+});
 
 test('replacing charts releases their canvases before creating replacements', () => {
   const lifecycle = createChartLifecycle();

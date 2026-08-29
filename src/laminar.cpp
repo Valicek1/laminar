@@ -30,6 +30,7 @@
 #include <fcntl.h>
 #include <fnmatch.h>
 #include <fstream>
+#include <vector>
 #include <zlib.h>
 
 #define COMPRESS_LOG_MIN_SIZE 1024
@@ -454,12 +455,18 @@ std::string Laminar::getStatus(MonitorScope scope) {
             j.set(job.c_str(), count);
         });
         j.EndObject();
+        std::vector<std::pair<str, uint>> timePerJobCounts;
         j.startObject("timePerJob");
-        db->stmt("SELECT name, AVG(completedAt-startedAt) av FROM builds WHERE completedAt > ? GROUP BY name ORDER BY av DESC LIMIT 8")
+        db->stmt("SELECT name, AVG(completedAt-startedAt) av, COUNT(*) FROM builds WHERE completedAt > ? GROUP BY name ORDER BY av DESC LIMIT 8")
                 .bind(time(nullptr) - 7 * 86400)
-                .fetch<str, double>([&](str job, double time){
+                .fetch<str, double, uint>([&](str job, double time, uint count){
             j.set(job.c_str(), time);
+            timePerJobCounts.emplace_back(job, count);
         });
+        j.EndObject();
+        j.startObject("timePerJobCounts");
+        for(const auto& job : timePerJobCounts)
+            j.set(job.first.c_str(), job.second);
         j.EndObject();
         j.startArray("resultChanged");
         db->stmt("SELECT b.name,MAX(b.number) as lastSuccess,lastFailure FROM builds AS b JOIN (SELECT name,MAX(number) AS lastFailure FROM builds WHERE result<>? GROUP BY name) AS t ON t.name=b.name WHERE b.result=? GROUP BY b.name ORDER BY lastSuccess>lastFailure, lastFailure-lastSuccess DESC LIMIT 8")
@@ -473,7 +480,7 @@ std::string Laminar::getStatus(MonitorScope scope) {
         });
         j.EndArray();
         j.startArray("lowPassRates");
-        db->stmt("SELECT name,CAST(SUM(result==?) AS FLOAT)/COUNT(*) AS passRate FROM builds GROUP BY name ORDER BY passRate ASC LIMIT 8")
+        db->stmt("SELECT name,CAST(SUM(result==?) AS FLOAT)/COUNT(*) AS passRate FROM builds WHERE result IS NOT NULL GROUP BY name ORDER BY passRate ASC LIMIT 8")
                 .bind(int(RunState::SUCCESS))
                 .fetch<str, double>([&](str job, double passRate){
             j.StartObject();
@@ -874,4 +881,3 @@ R"x(
     badge = svg;
     return true;
 }
-

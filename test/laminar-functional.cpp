@@ -42,9 +42,32 @@ TEST_F(LaminarFixture, EmptyStatusMessageStructure) {
     EXPECT_TRUE(data.HasMember("buildsPerDay"));
     EXPECT_TRUE(data.HasMember("buildsPerJob"));
     EXPECT_TRUE(data.HasMember("timePerJob"));
+    EXPECT_TRUE(data.HasMember("timePerJobCounts"));
     EXPECT_TRUE(data.HasMember("resultChanged"));
     EXPECT_TRUE(data.HasMember("lowPassRates"));
     EXPECT_TRUE(data.HasMember("buildTimeChanges"));
+}
+
+TEST_F(LaminarFixture, HomeStatisticsUseOnlyCompletedRuns) {
+    defineJob("foo", "true");
+    runJob("foo");
+
+    setNumExecutors(0);
+    ioContext->waitScope.poll();
+    ASSERT_NE(nullptr, laminar->queueJob("foo"));
+
+    rapidjson::Document json;
+    json.Parse(laminar->getStatus(MonitorScope{}).c_str());
+    ASSERT_FALSE(json.HasParseError());
+    auto data = json["data"].GetObject();
+
+    ASSERT_TRUE(data["timePerJob"].HasMember("foo"));
+    ASSERT_TRUE(data["timePerJobCounts"].HasMember("foo"));
+    EXPECT_EQ(1, data["timePerJobCounts"]["foo"].GetInt());
+    ASSERT_EQ(1u, data["lowPassRates"].Size());
+    EXPECT_STREQ("foo", data["lowPassRates"][0]["name"].GetString());
+    EXPECT_DOUBLE_EQ(1.0, data["lowPassRates"][0]["passRate"].GetDouble());
+    EXPECT_EQ(1, data["completedCounts"]["foo"].GetInt());
 }
 
 TEST_F(LaminarFixture, JobNotifyHomePage) {
