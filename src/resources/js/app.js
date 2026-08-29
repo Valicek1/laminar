@@ -109,6 +109,8 @@ Vue.mixin({
   }
 });
 
+const storage = window.LaminarAppState.createStorageAccess(() => window.localStorage);
+
 // Chart factory
 const Charts = (() => {
   // TODO usage is broken!
@@ -680,13 +682,21 @@ const Job = templateId => {
 const Run = templateId => {
   const utf8decoder = new TextDecoder('utf-8');
   const ansi_up = new AnsiUp;
-  const autoScrollLogger = {
+  const autoScrollDebugKey = 'laminar.debug.autoscroll';
+  const autoScrollDebugEnabled = storage.getItem(autoScrollDebugKey, null) === 'true';
+  const autoScrollLogger = autoScrollDebugEnabled ? {
     debug: function(message, details) {
       console.debug('[Laminar][autoscroll]', message, details);
     },
-  };
+  } : null;
+  console.info(!storage.isAvailable()
+    ? '[Laminar][autoscroll] debug logging disabled because localStorage is unavailable. Enable localStorage and reload to use diagnostics.'
+    : autoScrollDebugEnabled
+      ? '[Laminar][autoscroll] debug logging enabled. Disable with localStorage.removeItem("' + autoScrollDebugKey + '"); location.reload();'
+      : '[Laminar][autoscroll] debug logging disabled. Enable with localStorage.setItem("' + autoScrollDebugKey + '", "true"); location.reload();'
+  );
   const autoScrollPreference = (window.LaminarLogView && window.LaminarLogView.createAutoScrollPreference)
-    ? window.LaminarLogView.createAutoScrollPreference(window.localStorage, 'laminar.autoscroll.enabled')
+    ? window.LaminarLogView.createAutoScrollPreference(storage, 'laminar.autoscroll.enabled')
     : {
       load: function(defaultValue) {
         return defaultValue;
@@ -697,7 +707,9 @@ const Run = templateId => {
     let enabled = !!(options && options.enabled);
     const scrollTarget = (options && options.scrollTarget) || element;
     const scrollHeightSource = (options && options.scrollHeightSource) || scrollTarget;
-    const logger = (options && options.logger) || { debug: function() {} };
+    const logger = options && options.logger && typeof options.logger.debug === 'function'
+      ? options.logger
+      : null;
     const readScrollHeight = source => source && typeof source.scrollHeight === 'number' ? source.scrollHeight : 0;
     const writeScrollPosition = top => {
       if(scrollTarget && typeof scrollTarget.scrollTo === 'function')
@@ -705,11 +717,15 @@ const Run = templateId => {
       else if(scrollTarget)
         scrollTarget.scrollTop = top;
     };
-    const log = (message, details) => logger.debug(message, Object.assign({
-      enabled: enabled,
-      targetScrollTop: scrollTarget && scrollTarget.scrollTop,
-      sourceScrollHeight: readScrollHeight(scrollHeightSource),
-    }, details));
+    const log = (message, details) => {
+      if(!logger)
+        return;
+      logger.debug(message, Object.assign({
+        enabled: enabled,
+        targetScrollTop: scrollTarget && scrollTarget.scrollTop,
+        sourceScrollHeight: readScrollHeight(scrollHeightSource),
+      }, details));
+    };
 
     return {
       isEnabled: function() {
@@ -886,19 +902,21 @@ const Run = templateId => {
             logger: autoScrollLogger,
           });
           this.autoScrollController.element = element;
-          console.debug('[Laminar][autoscroll] controller created', {
-            scrollTargetTag: 'WINDOW',
-            enabled: state.autoScrollEnabled,
-          });
+          if(autoScrollDebugEnabled)
+            console.debug('[Laminar][autoscroll] controller created', {
+              scrollTargetTag: 'WINDOW',
+              enabled: state.autoScrollEnabled,
+            });
         }
         return this.autoScrollController;
       },
       toggleAutoScroll: function() {
         state.autoScrollEnabled = !state.autoScrollEnabled;
         autoScrollPreference.save(state.autoScrollEnabled);
-        console.debug('[Laminar][autoscroll] toggle requested', {
-          nextEnabled: state.autoScrollEnabled,
-        });
+        if(autoScrollDebugEnabled)
+          console.debug('[Laminar][autoscroll] toggle requested', {
+            nextEnabled: state.autoScrollEnabled,
+          });
         const controller = this.ensureAutoScrollController();
         if(controller)
           controller.setEnabled(state.autoScrollEnabled);
@@ -920,11 +938,12 @@ const Run = templateId => {
         const autoScroll = this.ensureAutoScrollController();
         if(autoScroll)
           autoScroll.setEnabled(state.autoScrollEnabled);
-        console.debug('[Laminar][autoscroll] run status updated', {
-          name: params.name,
-          number: params.number,
-          autoScrollEnabled: state.autoScrollEnabled,
-        });
+        if(autoScrollDebugEnabled)
+          console.debug('[Laminar][autoscroll] run status updated', {
+            name: params.name,
+            number: params.number,
+            autoScrollEnabled: state.autoScrollEnabled,
+          });
         if(this.logstream)
           this.logstream.abort();
         if(data.started)
@@ -1066,7 +1085,7 @@ const LaminarApp = new Vue({
     version: '',
     clockSkew: 0,
     connected: false,
-    notify: 'localStorage' in window && localStorage.getItem('showNotifications') == 1,
+    notify: storage.getItem('showNotifications', 0) == 1,
     route: { path: '', params: {} }
   },
   computed: {
@@ -1093,6 +1112,6 @@ const LaminarApp = new Vue({
     }
   },
   watch: {
-    notify: e => localStorage.setItem('showNotifications', e ? 1 : 0)
+    notify: e => storage.setItem('showNotifications', e ? 1 : 0)
   }
 });

@@ -4,7 +4,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const { createChartLifecycle } = require('../../src/resources/js/app-state.js');
+const {
+  createChartLifecycle,
+  createStorageAccess,
+} = require('../../src/resources/js/app-state.js');
+const LaminarLogView = require('../../src/resources/js/logview.js');
 
 const appPath = path.join(__dirname, '../../src/resources/js/app.js');
 const appSource = fs.readFileSync(appPath, 'utf8');
@@ -60,21 +64,24 @@ function loadRunComponent(overrides = {}) {
     Date: Date,
     TextDecoder: TextDecoder,
     clearTimeout: overrides.clearTimeout || (() => {}),
-    console: overrides.console || { debug: () => {}, error: () => {} },
+    console: overrides.console || { debug: () => {}, error: () => {}, info: () => {} },
     document: {
       body: {},
-      documentElement: { scrollHeight: 100 },
-      getElementsByClassName: () => [],
+      documentElement: overrides.documentElement || { scrollHeight: 100 },
+      getElementsByClassName: () => overrides.consoleElement ? [overrides.consoleElement] : [],
       getElementsByTagName: () => [codeElement],
       scrollingElement: null,
     },
     fetch: overrides.fetch,
     setTimeout: overrides.setTimeout || setTimeout,
+    storage: createStorageAccess(() => overrides.localStorage || {}),
     window: {
-      LaminarLogView: null,
+      LaminarLogView: Object.prototype.hasOwnProperty.call(overrides, 'laminarLogView')
+        ? overrides.laminarLogView
+        : LaminarLogView,
       addEventListener: () => {},
       innerHeight: 100,
-      localStorage: {},
+      localStorage: overrides.localStorage || {},
       scrollTo: () => {},
       scrollY: 0,
     },
@@ -302,6 +309,7 @@ test('leaving a run page does not report its expected fetch abort', async () => 
     console: {
       debug: () => {},
       error: (...args) => errors.push(args),
+      info: () => {},
     },
     fetch: (url, options) => new Promise((resolve, reject) => {
       options.signal.addEventListener('abort', () => {
@@ -329,6 +337,7 @@ test('an unsolicited log fetch abort is still reported', async () => {
     console: {
       debug: () => {},
       error: (...args) => errors.push(args),
+      info: () => {},
     },
     fetch: () => Promise.reject(error),
   });
@@ -341,4 +350,109 @@ test('an unsolicited log fetch abort is still reported', async () => {
   assert.equal(errors.length, 1);
   assert.equal(errors[0][0], '[Laminar][logstream] failed');
   assert.equal(errors[0][1], error);
+});
+
+test('autoscroll debug is disabled by default and announces how to enable it', () => {
+  const debugMessages = [];
+  const infoMessages = [];
+  const component = loadRunComponent({
+    console: {
+      debug: (...args) => debugMessages.push(args),
+      error: () => {},
+      info: (...args) => infoMessages.push(args),
+    },
+    localStorage: {
+      getItem: () => null,
+      setItem: () => {},
+    },
+  });
+  const instance = createRunInstance(component.definition);
+
+  component.definition.methods.status.call(instance, { latestNum: 42, started: 0 });
+
+  assert.equal(infoMessages.length, 1);
+  assert.match(infoMessages[0][0], /autoscroll.*debug.*disabled/i);
+  assert.match(infoMessages[0][0], /laminar\.debug\.autoscroll/);
+  assert.deepEqual(debugMessages, []);
+});
+
+test('autoscroll debug can be enabled persistently in production', () => {
+  const debugMessages = [];
+  const infoMessages = [];
+  const component = loadRunComponent({
+    console: {
+      debug: (...args) => debugMessages.push(args),
+      error: () => {},
+      info: (...args) => infoMessages.push(args),
+    },
+    localStorage: {
+      getItem: key => key === 'laminar.debug.autoscroll' ? 'true' : null,
+      setItem: () => {},
+    },
+  });
+  const instance = createRunInstance(component.definition);
+
+  component.definition.methods.status.call(instance, { latestNum: 42, started: 0 });
+
+  assert.equal(infoMessages.length, 1);
+  assert.match(infoMessages[0][0], /autoscroll.*debug.*enabled/i);
+  assert.match(infoMessages[0][0], /removeItem/);
+  assert.equal(debugMessages.length, 1);
+  assert.equal(debugMessages[0][0], '[Laminar][autoscroll] run status updated');
+});
+
+test('blocked local storage safely leaves autoscroll debug disabled', () => {
+  const infoMessages = [];
+
+  assert.doesNotThrow(() => loadRunComponent({
+    console: {
+      debug: () => {},
+      error: () => {},
+      info: (...args) => infoMessages.push(args),
+    },
+    localStorage: {
+      getItem: () => {
+        throw new Error('storage access denied');
+      },
+    },
+  }));
+
+  assert.equal(infoMessages.length, 1);
+  assert.match(infoMessages[0][0], /autoscroll.*debug.*disabled.*localStorage.*unavailable/i);
+  assert.doesNotMatch(infoMessages[0][0], /setItem/);
+});
+
+test('missing logview script uses a quiet autoscroll fallback', () => {
+  const debugMessages = [];
+  let diagnosticReads = 0;
+  const documentElement = {};
+  Object.defineProperties(documentElement, {
+    scrollHeight: {
+      get: () => {
+        diagnosticReads++;
+        return 320;
+      },
+    },
+  });
+  const component = loadRunComponent({
+    console: {
+      debug: (...args) => debugMessages.push(args),
+      error: () => {},
+      info: () => {},
+    },
+    consoleElement: { scrollHeight: 320, scrollTop: 0 },
+    documentElement: documentElement,
+    laminarLogView: null,
+    localStorage: {
+      getItem: () => null,
+      setItem: () => {},
+    },
+  });
+  const instance = createRunInstance(component.definition);
+
+  component.definition.methods.status.call(instance, { latestNum: 42, started: 0 });
+
+  assert.equal(instance.autoScrollController.isEnabled(), false);
+  assert.equal(diagnosticReads, 0);
+  assert.deepEqual(debugMessages, []);
 });

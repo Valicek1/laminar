@@ -2,9 +2,7 @@
   function createLogger(logger) {
     if(logger && typeof logger.debug === 'function')
       return logger;
-    return {
-      debug: function() {},
-    };
+    return null;
   }
 
   function readScrollHeight(source) {
@@ -48,6 +46,8 @@
     const logger = createLogger(options && options.logger);
 
     function log(event, details) {
+      if(!logger)
+        return;
       logger.debug(event, Object.assign({
         enabled: enabled,
         elementScrollTop: element.scrollTop,

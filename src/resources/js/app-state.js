@@ -39,6 +39,45 @@
     return completedCount;
   }
 
+  function createStorageAccess(getStorage) {
+    let storage = null;
+    try {
+      storage = getStorage();
+    } catch(error) {}
+
+    function disable() {
+      storage = null;
+    }
+
+    return {
+      getItem: function(key, fallbackValue) {
+        if(!storage || typeof storage.getItem !== 'function')
+          return fallbackValue;
+        try {
+          const value = storage.getItem(key);
+          return value === null ? fallbackValue : value;
+        } catch(error) {
+          disable();
+          return fallbackValue;
+        }
+      },
+      isAvailable: function() {
+        return !!storage && typeof storage.getItem === 'function' && typeof storage.setItem === 'function';
+      },
+      setItem: function(key, value) {
+        if(!storage || typeof storage.setItem !== 'function')
+          return false;
+        try {
+          storage.setItem(key, value);
+          return true;
+        } catch(error) {
+          disable();
+          return false;
+        }
+      },
+    };
+  }
+
   function createChartLifecycle() {
     let charts = {};
 
@@ -135,6 +174,7 @@
   const api = {
     createChartLifecycle: createChartLifecycle,
     createEventSourceController: createEventSourceController,
+    createStorageAccess: createStorageAccess,
     incrementCount: incrementCount,
     prependRecentRun: prependRecentRun,
     recordJobCompletion: recordJobCompletion,

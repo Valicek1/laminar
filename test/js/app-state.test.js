@@ -3,11 +3,38 @@ const assert = require('node:assert/strict');
 
 const {
   createChartLifecycle,
+  createStorageAccess,
   incrementCount,
   prependRecentRun,
   recordJobCompletion,
   recordSampleToMean,
 } = require('../../src/resources/js/app-state.js');
+
+test('storage access falls back when storage is unavailable', () => {
+  const unavailable = createStorageAccess(() => {
+    throw new Error('storage access denied');
+  });
+
+  assert.equal(unavailable.isAvailable(), false);
+  assert.equal(unavailable.getItem('missing', 'fallback'), 'fallback');
+  assert.equal(unavailable.setItem('key', 'value'), false);
+});
+
+test('storage access disables itself after an operation is rejected', () => {
+  const storage = createStorageAccess(() => ({
+    getItem: () => {
+      throw new Error('storage read denied');
+    },
+    setItem: () => {
+      throw new Error('storage write denied');
+    },
+  }));
+
+  assert.equal(storage.isAvailable(), true);
+  assert.equal(storage.getItem('key', null), null);
+  assert.equal(storage.isAvailable(), false);
+  assert.equal(storage.setItem('key', 'value'), false);
+});
 
 test('runtime mean retains both samples for a job missing from the snapshot', () => {
   const sampleCounts = {};

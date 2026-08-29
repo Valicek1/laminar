@@ -109,6 +109,30 @@ test('autoscroll emits debug logging when it appends content', () => {
   assert.equal(events[0].message, 'Laminar log autoscroll update');
 });
 
+test('disabled diagnostics do not collect scroll details', () => {
+  let diagnosticReads = 0;
+  const element = {};
+  Object.defineProperties(element, {
+    scrollHeight: {
+      get: () => {
+        diagnosticReads++;
+        return 320;
+      },
+    },
+    scrollTop: {
+      get: () => {
+        diagnosticReads++;
+        return 0;
+      },
+    },
+  });
+  const controller = createAutoScrollController(element);
+
+  controller.onContentAppended();
+
+  assert.equal(diagnosticReads, 0);
+});
+
 test('autoscroll preference persists enabled state', () => {
   const store = {
     data: {},
