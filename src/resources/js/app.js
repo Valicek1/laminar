@@ -687,7 +687,6 @@ const Job = templateId => {
 
 // Component for the /job/:name/:number endpoint
 const Run = templateId => {
-  const utf8decoder = new TextDecoder('utf-8');
   const ansi_up = new AnsiUp;
   const autoScrollDebugKey = 'laminar.debug.autoscroll';
   const autoScrollDebugEnabled = storage.getItem(autoScrollDebugKey, null) === 'true';
@@ -787,6 +786,7 @@ const Run = templateId => {
   });
   const logFetcher = (vm, name, num) => {
     const abortController = new AbortController();
+    const utf8decoder = new TextDecoder('utf-8');
     let active = true;
     let tid = null;
     const stream = {
@@ -855,6 +855,7 @@ const Run = templateId => {
           if(!active)
             return;
           if (done) {
+            logToRender += utf8decoder.decode();
             // do not set state.logComplete directly, because rendering
             // may take some time, and we don't want the progress indicator
             // to disappear before rendering is complete. Instead, delay
@@ -871,7 +872,7 @@ const Run = templateId => {
           // sometimes logs can be very large, and we are calling pump()
           // furiously to get all the data to the client. To prevent straining
           // the client renderer, buffer the data and delay the UI updates.
-          logToRender += utf8decoder.decode(value);
+          logToRender += utf8decoder.decode(value, {stream: true});
           if(tid === null)
             tid = setTimeout(updateUI, Math.max(500 - (Date.now() - lastUiUpdate), 0));
           return pump();

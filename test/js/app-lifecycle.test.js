@@ -107,6 +107,34 @@ function createRunInstance(definition) {
   };
 }
 
+async function renderLogReads(reads) {
+  const insertedHtml = [];
+  const pendingTimers = [];
+  const component = loadRunComponent({
+    codeElement: {
+      innerHTML: '',
+      insertAdjacentHTML: (position, html) => insertedHtml.push([position, html]),
+    },
+    fetch: () => Promise.resolve({
+      body: {
+        getReader: () => ({
+          read: () => Promise.resolve(reads.shift()),
+        }),
+      },
+    }),
+    setTimeout: callback => {
+      pendingTimers.push(callback);
+      return pendingTimers.length;
+    },
+  });
+  const instance = createRunInstance(component.definition);
+
+  component.definition.methods.status.call(instance, { latestNum: 42, started: 1 });
+  await new Promise(resolve => setImmediate(resolve));
+  pendingTimers.shift()();
+  return insertedHtml;
+}
+
 function jobStatus() {
   return {
     averageRuntime: 30,
@@ -270,6 +298,77 @@ test('destroyed job page ignores deferred chart creation', () => {
   component.nextTicks.shift()();
 
   assert.equal(createCount, 0);
+});
+
+test('log rendering preserves UTF-8 characters split across response chunks', async () => {
+  const insertedHtml = await renderLogReads([
+    { done: false, value: new Uint8Array([0x41, 0xc4]) },
+    { done: false, value: new Uint8Array([0x9b, 0x42]) },
+    { done: true },
+  ]);
+
+  assert.deepEqual(insertedHtml, [['beforeend', 'AěB']]);
+});
+
+test('restarting a log stream discards incomplete UTF-8 state', async () => {
+  const insertedHtml = [];
+  const pendingTimers = new Map();
+  let nextTimer = 1;
+  let fetchCount = 0;
+  let firstRead = true;
+  const secondReads = [
+    { done: false, value: new Uint8Array([0x41]) },
+    { done: true },
+  ];
+  const component = loadRunComponent({
+    codeElement: {
+      innerHTML: '',
+      insertAdjacentHTML: (position, html) => insertedHtml.push([position, html]),
+    },
+    clearTimeout: timer => pendingTimers.delete(timer),
+    fetch: () => {
+      fetchCount++;
+      return Promise.resolve({
+        body: {
+          getReader: () => ({
+            read: () => {
+              if(fetchCount === 1) {
+                if(firstRead) {
+                  firstRead = false;
+                  return Promise.resolve({ done: false, value: new Uint8Array([0xc4]) });
+                }
+                return new Promise(() => {});
+              }
+              return Promise.resolve(secondReads.shift());
+            },
+          }),
+        },
+      });
+    },
+    setTimeout: callback => {
+      const timer = nextTimer++;
+      pendingTimers.set(timer, callback);
+      return timer;
+    },
+  });
+  const instance = createRunInstance(component.definition);
+
+  component.definition.methods.status.call(instance, { latestNum: 42, started: 1 });
+  await new Promise(resolve => setImmediate(resolve));
+  component.definition.methods.status.call(instance, { latestNum: 42, started: 1 });
+  await new Promise(resolve => setImmediate(resolve));
+  pendingTimers.values().next().value();
+
+  assert.deepEqual(insertedHtml, [['beforeend', 'A']]);
+});
+
+test('log rendering flushes an incomplete UTF-8 sequence at end of response', async () => {
+  const insertedHtml = await renderLogReads([
+    { done: false, value: new Uint8Array([0x41, 0xc4]) },
+    { done: true },
+  ]);
+
+  assert.deepEqual(insertedHtml, [['beforeend', 'A�']]);
 });
 
 test('leaving a run page cancels its pending log render', async () => {
