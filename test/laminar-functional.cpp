@@ -70,6 +70,40 @@ TEST_F(LaminarFixture, HomeStatisticsUseOnlyCompletedRuns) {
     EXPECT_EQ(1, data["completedCounts"]["foo"].GetInt());
 }
 
+TEST_F(LaminarFixture, JobStatusReportsCompletedRunCount) {
+    defineJob("foo", "true");
+    runJob("foo");
+    runJob("foo");
+
+    rapidjson::Document json;
+    json.Parse(laminar->getStatus(MonitorScope{MonitorScope::JOB, "foo"}).c_str());
+    ASSERT_FALSE(json.HasParseError());
+    auto data = json["data"].GetObject();
+
+    ASSERT_TRUE(data.HasMember("completedRuns"));
+    EXPECT_EQ(2u, data["completedRuns"].GetUint());
+}
+
+TEST_F(LaminarFixture, JobStatusPreservesFractionalAverageRuntime) {
+    defineJob("foo", "true");
+    runJob("foo");
+    runJob("foo");
+
+    Database db((home + "/laminar.sqlite").c_str());
+    db.stmt("UPDATE builds SET startedAt = 0, completedAt = 20 WHERE name = ? AND number = ?")
+      .bind("foo", 1u)
+      .exec();
+    db.stmt("UPDATE builds SET startedAt = 0, completedAt = 21 WHERE name = ? AND number = ?")
+      .bind("foo", 2u)
+      .exec();
+
+    rapidjson::Document json;
+    json.Parse(laminar->getStatus(MonitorScope{MonitorScope::JOB, "foo"}).c_str());
+    ASSERT_FALSE(json.HasParseError());
+
+    EXPECT_DOUBLE_EQ(20.5, json["data"]["averageRuntime"].GetDouble());
+}
+
 TEST_F(LaminarFixture, JobNotifyHomePage) {
     defineJob("foo", "true");
     auto es = eventSource("/");

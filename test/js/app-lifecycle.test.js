@@ -13,6 +13,10 @@ const LaminarLogView = require('../../src/resources/js/logview.js');
 const appPath = path.join(__dirname, '../../src/resources/js/app.js');
 const appSource = fs.readFileSync(appPath, 'utf8');
 const progressMixinSource = appSource.slice(0, appSource.indexOf('// Utility methods'));
+const chartsSource = appSource.slice(
+  appSource.indexOf('const Charts ='),
+  appSource.indexOf('// For all charts')
+);
 const chartComponentsSource = appSource.slice(
   appSource.indexOf('const Home ='),
   appSource.indexOf('// Component for the /job/:name/:number endpoint')
@@ -38,6 +42,28 @@ function loadChartComponents(charts, overrides = {}) {
     context
   );
   return context;
+}
+
+function loadCharts() {
+  const createdCharts = [];
+  class TestChart {
+    constructor(element, config) {
+      this.data = config.data;
+      this.options = config.options;
+      this.updateCount = 0;
+      createdCharts.push(this);
+    }
+
+    update() {
+      this.updateCount++;
+    }
+  }
+  const context = {
+    Chart: TestChart,
+    document: { getElementById: id => ({ id: id }) },
+  };
+  vm.runInNewContext(chartsSource + '\n;globalThis.LoadedCharts = Charts;', context);
+  return { charts: context.LoadedCharts, createdCharts: createdCharts };
 }
 
 function createComponentInstance(definition, overrides = {}) {
@@ -138,6 +164,7 @@ async function renderLogReads(reads) {
 function jobStatus() {
   return {
     averageRuntime: 30,
+    completedRuns: 2,
     description: '',
     lastFailed: null,
     lastSuccess: null,
@@ -148,6 +175,36 @@ function jobStatus() {
     sort: { field: 'number', order: 'dsc', page: 0 },
   };
 }
+
+test('runtime chart updates its average from the completed run count', () => {
+  const loaded = loadCharts();
+  const chart = loaded.charts.createRunTimeChart('chartBt', [
+    { number: 2, started: 10, completed: 50, result: 'success' },
+    { number: 1, started: 10, completed: 30, result: 'success' },
+  ], 30, 2);
+
+  chart.jobCompleted(42, 'success', 90);
+
+  assert.equal(chart.avg, 50);
+  assert.equal(chart.options.scales.y.suggestedMax, 50);
+});
+
+test('job status passes completed run count to the runtime chart', () => {
+  let chartArguments;
+  const context = loadChartComponents({
+    createRunTimeChart: (...args) => {
+      chartArguments = args;
+      return { destroy: () => {} };
+    },
+  });
+  const definition = context.JobComponent('#job');
+  const component = createComponentInstance(definition);
+
+  definition.methods.status.call(component.instance, jobStatus());
+  component.nextTicks.shift()();
+
+  assert.equal(chartArguments[3], 2);
+});
 
 function homeStatus() {
   return {

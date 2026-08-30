@@ -330,7 +330,7 @@ const Charts = (() => {
       };
       return c;
     },
-    createRunTimeChart: (id, jobs, avg) => {
+    createRunTimeChart: (id, jobs, avg, completedRuns) => {
       const scale = timeScale(Math.max(...jobs.map(v=>v.completed-v.started)));
       const c = new Chart(document.getElementById(id), {
         type: 'bar',
@@ -385,9 +385,10 @@ const Charts = (() => {
         }]
       });
       c.avg = avg;
+      c.completedRuns = completedRuns;
       c.jobCompleted = (num, result, time) => {
-        c.avg = ((c.avg * (num - 1)) + time) / num;
-        c.options.scales.y.suggestedMax = avg * scale.factor;
+        c.avg = ((c.avg * c.completedRuns) + time) / ++c.completedRuns;
+        c.options.scales.y.suggestedMax = c.avg * scale.factor;
         if(c.data.datasets[0].data.length == 20) {
           c.data.labels.shift();
           c.data.datasets[0].data.shift();
@@ -639,7 +640,7 @@ const Job = templateId => {
           if(!this.chartLifecycle)
             return;
           this.chartLifecycle.replace(own => {
-            own('buildTime', Charts.createRunTimeChart("chartBt", msg.recent, msg.averageRuntime));
+            own('buildTime', Charts.createRunTimeChart("chartBt", msg.recent, msg.averageRuntime, msg.completedRuns));
           });
         });
       },

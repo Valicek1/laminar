@@ -305,8 +305,9 @@ std::string Laminar::getStatus(MonitorScope scope) {
         j.EndArray();
         db->stmt("SELECT COUNT(*),AVG(completedAt-startedAt) FROM builds WHERE name = ? AND result IS NOT NULL")
         .bind(scope.job)
-        .fetch<uint,uint>([&](uint nRuns, uint averageRuntime){
+        .fetch<uint,double>([&](uint nRuns, double averageRuntime){
             j.set("averageRuntime", averageRuntime);
+            j.set("completedRuns", nRuns);
             j.set("pages", (nRuns-1) / runsPerPage + 1);
             j.startObject("sort");
             j.set("page", scope.page)
