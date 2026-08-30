@@ -84,6 +84,18 @@ TEST_F(LaminarFixture, JobStatusReportsCompletedRunCount) {
     EXPECT_EQ(2u, data["completedRuns"].GetUint());
 }
 
+TEST_F(LaminarFixture, EmptyJobStatusReportsSinglePage) {
+    defineJob("foo", "true");
+
+    rapidjson::Document json;
+    json.Parse(laminar->getStatus(MonitorScope{MonitorScope::JOB, "foo"}).c_str());
+    ASSERT_FALSE(json.HasParseError());
+    auto data = json["data"].GetObject();
+
+    EXPECT_EQ(0u, data["completedRuns"].GetUint());
+    EXPECT_EQ(1u, data["pages"].GetUint());
+}
+
 TEST_F(LaminarFixture, JobStatusPreservesFractionalAverageRuntime) {
     defineJob("foo", "true");
     runJob("foo");
