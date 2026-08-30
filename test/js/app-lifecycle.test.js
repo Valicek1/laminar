@@ -367,6 +367,136 @@ test('log rendering preserves UTF-8 characters split across response chunks', as
   assert.deepEqual(insertedHtml, [['beforeend', 'AěB']]);
 });
 
+test('large log chunks render before a delayed timer can grow the buffer', async () => {
+  const insertedHtml = [];
+  const pendingTimers = new Map();
+  const chunk = new Uint8Array(64 * 1024).fill(0x41);
+  let nextTimer = 1;
+  let readCount = 0;
+  const component = loadRunComponent({
+    codeElement: {
+      innerHTML: '',
+      insertAdjacentHTML: (position, html) => insertedHtml.push([position, html]),
+    },
+    clearTimeout: timer => pendingTimers.delete(timer),
+    fetch: () => Promise.resolve({
+      body: {
+        getReader: () => ({
+          read: () => {
+            readCount++;
+            if(readCount <= 4)
+              return Promise.resolve({ done: false, value: chunk });
+            return new Promise(() => {});
+          },
+        }),
+      },
+    }),
+    setTimeout: callback => {
+      const timer = nextTimer++;
+      pendingTimers.set(timer, callback);
+      return timer;
+    },
+  });
+  const instance = createRunInstance(component.definition);
+
+  component.definition.methods.status.call(instance, { latestNum: 42, started: 1 });
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(insertedHtml.length, 1);
+  assert.equal(insertedHtml[0][0], 'beforeend');
+  assert.equal(insertedHtml[0][1].length, 256 * 1024);
+  assert.equal(pendingTimers.size, 0);
+});
+
+test('a single oversized log chunk is rendered in bounded pieces', async () => {
+  const insertedHtml = [];
+  const pendingTimers = new Map();
+  const chunk = new Uint8Array(600 * 1024).fill(0x41);
+  let nextTimer = 1;
+  let readCount = 0;
+  const component = loadRunComponent({
+    codeElement: {
+      innerHTML: '',
+      insertAdjacentHTML: (position, html) => insertedHtml.push([position, html]),
+    },
+    clearTimeout: timer => pendingTimers.delete(timer),
+    fetch: () => Promise.resolve({
+      body: {
+        getReader: () => ({
+          read: () => {
+            readCount++;
+            if(readCount === 1)
+              return Promise.resolve({ done: false, value: chunk });
+            return new Promise(() => {});
+          },
+        }),
+      },
+    }),
+    setTimeout: callback => {
+      const timer = nextTimer++;
+      pendingTimers.set(timer, callback);
+      return timer;
+    },
+  });
+  const instance = createRunInstance(component.definition);
+
+  component.definition.methods.status.call(instance, { latestNum: 42, started: 1 });
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(insertedHtml.map(entry => entry[1].length), [256 * 1024, 256 * 1024]);
+  assert.equal(pendingTimers.size, 1);
+  pendingTimers.values().next().value();
+  assert.deepEqual(insertedHtml.map(entry => entry[1].length), [
+    256 * 1024,
+    256 * 1024,
+    88 * 1024,
+  ]);
+  assert.equal(insertedHtml.map(entry => entry[1]).join('').length, 600 * 1024);
+});
+
+test('runtime links survive a forced render boundary', async () => {
+  const insertedHtml = [];
+  const pendingTimers = new Map();
+  const markerPrefix = '\x1b[{child';
+  const firstText = 'A'.repeat(256 * 1024 - markerPrefix.length) + markerPrefix;
+  const reads = [
+    { done: false, value: new TextEncoder().encode(firstText) },
+    { done: false, value: new TextEncoder().encode(':7\x1b\\\n') },
+    { done: true },
+  ];
+  let nextTimer = 1;
+  const component = loadRunComponent({
+    codeElement: {
+      innerHTML: '',
+      insertAdjacentHTML: (position, html) => insertedHtml.push([position, html]),
+    },
+    clearTimeout: timer => pendingTimers.delete(timer),
+    fetch: () => Promise.resolve({
+      body: {
+        getReader: () => ({ read: () => Promise.resolve(reads.shift()) }),
+      },
+    }),
+    setTimeout: callback => {
+      const timer = nextTimer++;
+      pendingTimers.set(timer, callback);
+      return timer;
+    },
+  });
+  const instance = createRunInstance(component.definition);
+
+  component.definition.methods.status.call(instance, { latestNum: 42, started: 1 });
+  await new Promise(resolve => setImmediate(resolve));
+  pendingTimers.values().next().value();
+
+  const rendered = insertedHtml.map(entry => entry[1]).join('');
+  assert.equal(insertedHtml[0][1].length, 256 * 1024 - markerPrefix.length);
+  assert.equal(rendered.includes('\x1b'), false);
+  assert.equal(rendered.endsWith(
+    '<a href="jobs/child" onclick="return LaminarApp.navigate(this.href);">child</a>:' +
+    '<a href="jobs/child/7" onclick="return LaminarApp.navigate(this.href);">#7</a>\n'
+  ), true);
+});
+
 test('restarting a log stream discards incomplete UTF-8 state', async () => {
   const insertedHtml = [];
   const pendingTimers = new Map();

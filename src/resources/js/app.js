@@ -786,6 +786,10 @@ const Run = templateId => {
       document.documentElement.scrollHeight - 1;
   });
   const logFetcher = (vm, name, num) => {
+    const maxLogRenderBufferBytes = 256 * 1024;
+    const maxRunLinkCarryChars = 1024;
+    const runLinkStart = '\x1b[{';
+    const runLinkEnd = '\x1b\\';
     const abortController = new AbortController();
     const utf8decoder = new TextDecoder('utf-8');
     let active = true;
@@ -811,6 +815,8 @@ const Run = templateId => {
       const target = document.getElementsByTagName('code')[0];
       const autoScroll = vm.ensureAutoScrollController();
       let logToRender = '';
+      let logToRenderBytes = 0;
+      let runLinkCarry = '';
       let logComplete = false;
       let lastUiUpdate = 0;
 
@@ -828,8 +834,30 @@ const Run = templateId => {
         // a callback interface for handling unknown sequences.
         // Also, update the DOM directly rather than using a binding through
         // Vue, the performance is noticeably better with large logs.
+        let textToRender = runLinkCarry + logToRender;
+        runLinkCarry = '';
+        if(!logComplete) {
+          let carryAt = -1;
+          const lastRunLinkStart = textToRender.lastIndexOf(runLinkStart);
+          if(lastRunLinkStart !== -1 &&
+              textToRender.indexOf(runLinkEnd, lastRunLinkStart + runLinkStart.length) === -1 &&
+              textToRender.length - lastRunLinkStart <= maxRunLinkCarryChars) {
+            carryAt = lastRunLinkStart;
+          } else {
+            for(let length = runLinkStart.length - 1; length > 0; --length) {
+              if(textToRender.endsWith(runLinkStart.slice(0, length))) {
+                carryAt = textToRender.length - length;
+                break;
+              }
+            }
+          }
+          if(carryAt !== -1) {
+            runLinkCarry = textToRender.slice(carryAt);
+            textToRender = textToRender.slice(0, carryAt);
+          }
+        }
         target.insertAdjacentHTML('beforeend', ansi_up.ansi_to_html(
-          logToRender.replace(/\033\[\{([^:]+):(\d+)\033\\/g, (m, $1, $2) =>
+          textToRender.replace(/\033\[\{([^:]+):(\d+)\033\\/g, (m, $1, $2) =>
             '~~~~LAMINAR_RUN~'+$1+':'+$2+'~'
           )
         ).replace(/~~~~LAMINAR_RUN~([^:]+):(\d+)~/g, (m, $1, $2) =>
@@ -837,6 +865,7 @@ const Run = templateId => {
           '<a href="jobs/'+$1+'/'+$2+'" onclick="return LaminarApp.navigate(this.href);">#'+$2+'</a>'
         ));
         logToRender = '';
+        logToRenderBytes = 0;
         if(autoScroll)
           autoScroll.onContentAppended();
         if (logComplete) {
@@ -873,9 +902,24 @@ const Run = templateId => {
           // sometimes logs can be very large, and we are calling pump()
           // furiously to get all the data to the client. To prevent straining
           // the client renderer, buffer the data and delay the UI updates.
-          logToRender += utf8decoder.decode(value, {stream: true});
-          if(tid === null)
+          for(let offset = 0; offset < value.byteLength;) {
+            const bytesAvailable = maxLogRenderBufferBytes - logToRenderBytes;
+            const end = Math.min(offset + bytesAvailable, value.byteLength);
+            const part = value.subarray(offset, end);
+            logToRender += utf8decoder.decode(part, {stream: true});
+            logToRenderBytes += part.byteLength;
+            offset = end;
+            if(logToRenderBytes >= maxLogRenderBufferBytes) {
+              if(tid !== null) {
+                clearTimeout(tid);
+                tid = null;
+              }
+              updateUI();
+            }
+          }
+          if(logToRenderBytes > 0 && tid === null) {
             tid = setTimeout(updateUI, Math.max(500 - (Date.now() - lastUiUpdate), 0));
+          }
           return pump();
         });
       }();
