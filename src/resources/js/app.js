@@ -534,6 +534,7 @@ const All = templateId => {
           }
         });
         state.groups = {};
+        state.regexps = {};
         Object.keys(msg.groups).forEach(k => state.regexps[k] = new RegExp(state.groups[k] = msg.groups[k]));
         state.ungrouped = state.jobs.filter(j => !Object.values(state.regexps).some(r => r.test(j.name))).map(j => j.name);
         state.group = state.ungrouped.length ? null : Object.keys(state.groups)[0];

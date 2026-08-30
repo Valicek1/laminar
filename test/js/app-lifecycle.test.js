@@ -38,7 +38,7 @@ function loadChartComponents(charts, overrides = {}) {
     },
   };
   vm.runInNewContext(
-    chartComponentsSource + '\n;globalThis.HomeComponent = Home; globalThis.JobComponent = Job;',
+    chartComponentsSource + '\n;globalThis.HomeComponent = Home; globalThis.AllComponent = All; globalThis.JobComponent = Job;',
     context
   );
   return context;
@@ -223,6 +223,30 @@ function homeStatus() {
     timePerJobCounts: {},
   };
 }
+
+test('removing a group makes its jobs ungrouped on the next status snapshot', () => {
+  const context = loadChartComponents({});
+  const definition = context.AllComponent('#jobs');
+  const instance = { search: '' };
+  const jobs = [{ name: 'legacy' }];
+
+  definition.methods.status.call(instance, {
+    jobs: jobs,
+    running: [],
+    groups: { legacy: '^legacy$' },
+  });
+  definition.methods.status.call(instance, {
+    jobs: jobs,
+    running: [],
+    groups: {},
+  });
+
+  const visibleJobs = Array.from(
+    definition.methods.filteredJobs.call(instance),
+    job => job.name
+  );
+  assert.deepEqual(visibleJobs, ['legacy']);
+});
 
 test('destroying a component clears its own progress timer', () => {
   const mixins = [];
